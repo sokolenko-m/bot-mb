@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Отчёт по загрузке</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #1a1d29);
+    --hint: var(--tg-theme-hint-color, #6b7280);
+    --link: var(--tg-theme-link-color, #2563eb);
+    --button: var(--tg-theme-button-color, #2563eb);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --secondary-bg: var(--tg-theme-secondary-bg-color, #f2f2f7);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 12px 14px 32px;
+  }
+  h1 { font-size: 17px; margin: 4px 0 14px; }
+  label { display: block; font-size: 13px; color: var(--hint); margin: 12px 0 4px; }
+  select, input[type=date] {
+    width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--secondary-bg);
+    background: var(--secondary-bg); color: var(--text); font-size: 15px;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .presets { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .preset-btn {
+    padding: 6px 10px; border-radius: 999px; border: 1px solid var(--secondary-bg);
+    background: var(--secondary-bg); color: var(--text); font-size: 12.5px; cursor: pointer;
+  }
+  .preset-btn.active { background: var(--button); color: var(--button-text); border-color: var(--button); }
+  button.primary {
+    width: 100%; margin-top: 16px; padding: 12px; border: none; border-radius: 10px;
+    background: var(--button); color: var(--button-text); font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button.primary:disabled { opacity: .5; }
+  .export-row { display: flex; gap: 8px; margin-top: 10px; }
+  .export-row button {
+    flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--secondary-bg);
+    background: var(--secondary-bg); color: var(--text); font-size: 13.5px; cursor: pointer;
+  }
+  #summary { margin-top: 18px; padding: 12px; background: var(--secondary-bg); border-radius: 12px; font-size: 14px; }
+  #summary b { font-size: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--secondary-bg); vertical-align: top; }
+  th { color: var(--hint); font-weight: 600; }
+  .status-done { color: #16a34a; }
+  .status-open { color: var(--hint); }
+  #msg { margin-top: 12px; font-size: 13px; color: var(--hint); min-height: 18px; }
+  #msg.error { color: #dc2626; }
+  #msg.ok { color: #16a34a; }
+</style>
+</head>
+<body>
+  <h1>Отчёт по загрузке конструктора</h1>
+
+  <label>Конструктор</label>
+  <select id="constructor"><option>Загрузка...</option></select>
+
+  <label>Период</label>
+  <div class="row">
+    <input type="date" id="startDate" />
+    <input type="date" id="endDate" />
+  </div>
+  <div class="presets">
+    <button class="preset-btn" data-preset="this-month">Этот месяц</button>
+    <button class="preset-btn" data-preset="last-month">Прошлый месяц</button>
+    <button class="preset-btn" data-preset="this-week">Эта неделя</button>
+  </div>
+
+  <button class="primary" id="btn-report">Сформировать отчёт</button>
+  <div id="msg"></div>
+
+  <div id="summary" hidden></div>
+
+  <div class="export-row" id="export-row" hidden>
+    <button id="btn-xlsx">Скачать Excel</button>
+    <button id="btn-pdf">Скачать PDF</button>
+  </div>
+
+  <table id="table" hidden>
+    <thead>
+      <tr><th>Задача</th><th>Начало</th><th>План, ч</th><th>Факт, ч</th><th>Статус</th></tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const initData = tg?.initData || "";
+
+const $ = (s) => document.querySelector(s);
+let currentReport = null;
+let currentConstructorName = "";
+let currentPeriodLabel = "";
+
+function pad(n) { return String(n).padStart(2, "0"); }
+function toDateStr(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+
+function setPreset(preset) {
+  const now = new Date();
+  let start, end;
+  if (preset === "this-month") {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  } else if (preset === "last-month") {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth(), 1);
+  } else if (preset === "this-week") {
+    const day = (now.getDay() + 6) % 7; // Monday=0
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+    end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 7);
+  }
+  $("#startDate").value = toDateStr(start);
+  $("#endDate").value = toDateStr(end);
+  document.querySelectorAll(".preset-btn").forEach((b) => b.classList.toggle("active", b.dataset.preset === preset));
+}
+
+document.querySelectorAll(".preset-btn").forEach((b) => b.addEventListener("click", () => setPreset(b.dataset.preset)));
+setPreset("this-month");
+
+async function api(path, options = {}) {
+  const resp = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": initData, ...(options.headers || {}) },
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `Ошибка ${resp.status}`);
+  return data;
+}
+
+function showMsg(text, kind) {
+  const el = $("#msg");
+  el.textContent = text || "";
+  el.className = kind || "";
+}
+
+async function loadConstructors() {
+  const sel = $("#constructor");
+  try {
+    const list = await api("/api/constructors");
+    sel.innerHTML = list.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+    if (list.length === 0) sel.innerHTML = "<option>Не найдено</option>";
+  } catch (e) {
+    sel.innerHTML = "<option>Ошибка загрузки</option>";
+    showMsg(e.message, "error");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function formatDateShort(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+}
+
+$("#btn-report").addEventListener("click", async () => {
+  const constructorId = $("#constructor").value;
+  const startDate = $("#startDate").value;
+  const endDate = $("#endDate").value;
+  if (!constructorId || !startDate || !endDate) {
+    showMsg("Выберите конструктора и период.", "error");
+    return;
+  }
+  currentConstructorName = $("#constructor").selectedOptions[0]?.textContent || "";
+  currentPeriodLabel = `${formatDateShort(startDate)}–${formatDateShort(endDate)}`;
+
+  showMsg("Формирую отчёт...");
+  $("#btn-report").disabled = true;
+  try {
+    const report = await api("/api/report", { method: "POST", body: JSON.stringify({ constructorId, startDate, endDate }) });
+    currentReport = report;
+    renderReport(report);
+    showMsg("");
+  } catch (e) {
+    showMsg(e.message, "error");
+  } finally {
+    $("#btn-report").disabled = false;
+  }
+});
+
+function renderReport(report) {
+  $("#summary").hidden = false;
+  $("#summary").innerHTML = `<b>${report.totals.plannedHours} ч</b> план · <b>${report.totals.factHours} ч</b> факт · задач: ${report.totals.count}`;
+
+  $("#export-row").hidden = report.tasks.length === 0;
+
+  const tbody = $("#table-body");
+  if (report.tasks.length === 0) {
+    $("#table").hidden = true;
+    return;
+  }
+  $("#table").hidden = false;
+  tbody.innerHTML = report.tasks
+    .map(
+      (t) => `<tr>
+        <td>${escapeHtml(t.title)}</td>
+        <td>${formatDateShort(t.start)}</td>
+        <td>${t.plannedHours ?? ""}</td>
+        <td>${t.factHours ?? ""}</td>
+        <td class="${t.done ? "status-done" : "status-open"}">${t.done ? "Готово" : "В работе"}</td>
+      </tr>`
+    )
+    .join("");
+}
+
+async function doExport(format) {
+  if (!currentReport) return;
+  const constructorId = $("#constructor").value;
+  const startDate = $("#startDate").value;
+  const endDate = $("#endDate").value;
+  showMsg("Готовлю файл и отправляю в чат...");
+  try {
+    await api("/api/export", {
+      method: "POST",
+      body: JSON.stringify({
+        constructorId,
+        constructorName: currentConstructorName,
+        startDate,
+        endDate,
+        periodLabel: currentPeriodLabel,
+        format,
+      }),
+    });
+    showMsg("Отправлено вам в чат с ботом ✓", "ok");
+    tg?.HapticFeedback?.notificationOccurred("success");
+  } catch (e) {
+    showMsg(e.message, "error");
+  }
+}
+
+$("#btn-xlsx").addEventListener("click", () => doExport("xlsx"));
+$("#btn-pdf").addEventListener("click", () => doExport("pdf"));
+
+loadConstructors();
+</script>
+</body>
+</html>
