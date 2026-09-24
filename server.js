@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/assets", express.static(path.join(__dirname, "assets")));
 
 app.get("/api/constructors", requireTelegramAuth, async (req, res) => {
   try {
@@ -27,7 +28,7 @@ app.post("/api/report", requireTelegramAuth, async (req, res) => {
   try {
     const { constructorId, startDate, endDate } = req.body || {};
     if (!constructorId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Нужны constructorId, startDate, endDate." });
+      return res.status(400).json({ error: "Потрібні constructorId, startDate, endDate." });
     }
     res.json(await buildReport(constructorId, startDate, endDate));
   } catch (e) {
@@ -39,7 +40,7 @@ app.post("/api/export", requireTelegramAuth, async (req, res) => {
   try {
     const { constructorId, constructorName, startDate, endDate, periodLabel, format } = req.body || {};
     if (!constructorId || !startDate || !endDate || !format) {
-      return res.status(400).json({ error: "Нужны constructorId, startDate, endDate, format." });
+      return res.status(400).json({ error: "Потрібні constructorId, startDate, endDate, format." });
     }
 
     const { tasks, totals } = await buildReport(constructorId, startDate, endDate);
@@ -48,12 +49,12 @@ app.post("/api/export", requireTelegramAuth, async (req, res) => {
     let buffer, filename;
     if (format === "xlsx") {
       buffer = await buildXlsx(payload);
-      filename = `Отчёт ${payload.constructorName}.xlsx`;
+      filename = `Звіт ${payload.constructorName}.xlsx`;
     } else if (format === "pdf") {
       buffer = await buildPdf(payload);
-      filename = `Отчёт ${payload.constructorName}.pdf`;
+      filename = `Звіт ${payload.constructorName}.pdf`;
     } else {
-      return res.status(400).json({ error: "format должен быть 'xlsx' или 'pdf'." });
+      return res.status(400).json({ error: "format має бути 'xlsx' або 'pdf'." });
     }
 
     await sendDocument(req.telegramUser.id, buffer, filename, payload.periodLabel);

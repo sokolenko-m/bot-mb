@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="uk">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Отчёт по загрузке</title>
+<title>Звіт по завантаженості</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -11,7 +11,7 @@
     --text: var(--tg-theme-text-color, #1a1d29);
     --hint: var(--tg-theme-hint-color, #6b7280);
     --link: var(--tg-theme-link-color, #2563eb);
-    --button: var(--tg-theme-button-color, #2563eb);
+    --button: var(--tg-theme-button-color, #c00000);
     --button-text: var(--tg-theme-button-text-color, #ffffff);
     --secondary-bg: var(--tg-theme-secondary-bg-color, #f2f2f7);
   }
@@ -23,6 +23,8 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     padding: 12px 14px 32px;
   }
+  .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .brand img { height: 26px; }
   h1 { font-size: 17px; margin: 4px 0 14px; }
   label { display: block; font-size: 13px; color: var(--hint); margin: 12px 0 4px; }
   select, input[type=date] {
@@ -49,46 +51,51 @@
   }
   #summary { margin-top: 18px; padding: 12px; background: var(--secondary-bg); border-radius: 12px; font-size: 14px; }
   #summary b { font-size: 16px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12.5px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
   th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--secondary-bg); vertical-align: top; }
   th { color: var(--hint); font-weight: 600; }
   .status-done { color: #16a34a; }
-  .status-open { color: var(--hint); }
+  .status-open { color: #c00000; }
+  .status-planned { color: var(--hint); }
   #msg { margin-top: 12px; font-size: 13px; color: var(--hint); min-height: 18px; }
   #msg.error { color: #dc2626; }
   #msg.ok { color: #16a34a; }
 </style>
 </head>
 <body>
-  <h1>Отчёт по загрузке конструктора</h1>
+  <div class="brand"><img src="/assets/logo.png" alt="МаксіБуд" /></div>
+  <h1>Звіт по завантаженості конструктора</h1>
 
   <label>Конструктор</label>
-  <select id="constructor"><option>Загрузка...</option></select>
+  <select id="constructor"><option>Завантаження...</option></select>
 
-  <label>Период</label>
+  <label>Період</label>
   <div class="row">
     <input type="date" id="startDate" />
     <input type="date" id="endDate" />
   </div>
   <div class="presets">
-    <button class="preset-btn" data-preset="this-month">Этот месяц</button>
-    <button class="preset-btn" data-preset="last-month">Прошлый месяц</button>
-    <button class="preset-btn" data-preset="this-week">Эта неделя</button>
+    <button class="preset-btn" data-preset="today">Сьогодні</button>
+    <button class="preset-btn" data-preset="this-week">Цей тиждень</button>
+    <button class="preset-btn" data-preset="next-week">Наступний тиждень</button>
+    <button class="preset-btn" data-preset="this-month">Цей місяць</button>
+    <button class="preset-btn" data-preset="next-month">Наступний місяць</button>
+    <button class="preset-btn" data-preset="last-month">Минулий місяць</button>
   </div>
 
-  <button class="primary" id="btn-report">Сформировать отчёт</button>
+  <button class="primary" id="btn-report">Сформувати звіт</button>
   <div id="msg"></div>
 
   <div id="summary" hidden></div>
 
   <div class="export-row" id="export-row" hidden>
-    <button id="btn-xlsx">Скачать Excel</button>
-    <button id="btn-pdf">Скачать PDF</button>
+    <button id="btn-xlsx">Завантажити Excel</button>
+    <button id="btn-pdf">Завантажити PDF</button>
   </div>
 
   <table id="table" hidden>
     <thead>
-      <tr><th>Задача</th><th>Начало</th><th>План, ч</th><th>Факт, ч</th><th>Статус</th></tr>
+      <tr><th>Об'єкт</th><th>Найменування задачі</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
     </thead>
     <tbody id="table-body"></tbody>
   </table>
@@ -109,16 +116,26 @@ function toDateStr(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pa
 function setPreset(preset) {
   const now = new Date();
   let start, end;
-  if (preset === "this-month") {
-    start = new Date(now.getFullYear(), now.getMonth(), 1);
-    end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  } else if (preset === "last-month") {
-    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    end = new Date(now.getFullYear(), now.getMonth(), 1);
+  if (preset === "today") {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
   } else if (preset === "this-week") {
     const day = (now.getDay() + 6) % 7; // Monday=0
     start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
     end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 7);
+  } else if (preset === "next-week") {
+    const day = (now.getDay() + 6) % 7;
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 7);
+    end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 14);
+  } else if (preset === "this-month") {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  } else if (preset === "next-month") {
+    start = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+  } else if (preset === "last-month") {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth(), 1);
   }
   $("#startDate").value = toDateStr(start);
   $("#endDate").value = toDateStr(end);
@@ -134,7 +151,7 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": initData, ...(options.headers || {}) },
   });
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || `Ошибка ${resp.status}`);
+  if (!resp.ok) throw new Error(data.error || `Помилка ${resp.status}`);
   return data;
 }
 
@@ -149,9 +166,9 @@ async function loadConstructors() {
   try {
     const list = await api("/api/constructors");
     sel.innerHTML = list.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
-    if (list.length === 0) sel.innerHTML = "<option>Не найдено</option>";
+    if (list.length === 0) sel.innerHTML = "<option>Не знайдено</option>";
   } catch (e) {
-    sel.innerHTML = "<option>Ошибка загрузки</option>";
+    sel.innerHTML = "<option>Помилка завантаження</option>";
     showMsg(e.message, "error");
   }
 }
@@ -163,21 +180,23 @@ function escapeHtml(s) {
 function formatDateShort(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
 }
+
+const STATUS_CLASS = { "Виконано": "status-done", "В роботі": "status-open", "Заплановано": "status-planned" };
 
 $("#btn-report").addEventListener("click", async () => {
   const constructorId = $("#constructor").value;
   const startDate = $("#startDate").value;
   const endDate = $("#endDate").value;
   if (!constructorId || !startDate || !endDate) {
-    showMsg("Выберите конструктора и период.", "error");
+    showMsg("Оберіть конструктора та період.", "error");
     return;
   }
   currentConstructorName = $("#constructor").selectedOptions[0]?.textContent || "";
   currentPeriodLabel = `${formatDateShort(startDate)}–${formatDateShort(endDate)}`;
 
-  showMsg("Формирую отчёт...");
+  showMsg("Формую звіт...");
   $("#btn-report").disabled = true;
   try {
     const report = await api("/api/report", { method: "POST", body: JSON.stringify({ constructorId, startDate, endDate }) });
@@ -193,7 +212,7 @@ $("#btn-report").addEventListener("click", async () => {
 
 function renderReport(report) {
   $("#summary").hidden = false;
-  $("#summary").innerHTML = `<b>${report.totals.plannedHours} ч</b> план · <b>${report.totals.factHours} ч</b> факт · задач: ${report.totals.count}`;
+  $("#summary").innerHTML = `<b>${report.totals.plannedHours} год</b> план · <b>${report.totals.factHours} год</b> факт · задач: ${report.totals.count}`;
 
   $("#export-row").hidden = report.tasks.length === 0;
 
@@ -206,11 +225,11 @@ function renderReport(report) {
   tbody.innerHTML = report.tasks
     .map(
       (t) => `<tr>
+        <td>${escapeHtml(t.objectName || "—")}</td>
         <td>${escapeHtml(t.title)}</td>
-        <td>${formatDateShort(t.start)}</td>
         <td>${t.plannedHours ?? ""}</td>
         <td>${t.factHours ?? ""}</td>
-        <td class="${t.done ? "status-done" : "status-open"}">${t.done ? "Готово" : "В работе"}</td>
+        <td class="${STATUS_CLASS[t.status] || ""}">${t.status}</td>
       </tr>`
     )
     .join("");
@@ -221,7 +240,7 @@ async function doExport(format) {
   const constructorId = $("#constructor").value;
   const startDate = $("#startDate").value;
   const endDate = $("#endDate").value;
-  showMsg("Готовлю файл и отправляю в чат...");
+  showMsg("Готую файл і надсилаю в чат...");
   try {
     await api("/api/export", {
       method: "POST",
@@ -234,7 +253,7 @@ async function doExport(format) {
         format,
       }),
     });
-    showMsg("Отправлено вам в чат с ботом ✓", "ok");
+    showMsg("Надіслано вам у чат з ботом ✓", "ok");
     tg?.HapticFeedback?.notificationOccurred("success");
   } catch (e) {
     showMsg(e.message, "error");

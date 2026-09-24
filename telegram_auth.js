@@ -27,12 +27,12 @@ class AuthError extends Error {
 
 /** Returns the validated Telegram user object, or throws AuthError. */
 function validateInitData(initData) {
-  if (!BOT_TOKEN) throw new AuthError("TELEGRAM_BOT_TOKEN не задан на сервере.", 500);
-  if (!initData) throw new AuthError("Нет initData — открывайте это приложение только через Telegram.");
+  if (!BOT_TOKEN) throw new AuthError("TELEGRAM_BOT_TOKEN не задано на сервері.", 500);
+  if (!initData) throw new AuthError("Немає initData — відкривайте цей застосунок лише через Telegram.");
 
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
-  if (!hash) throw new AuthError("initData без подписи.");
+  if (!hash) throw new AuthError("initData без підпису.");
   params.delete("hash");
 
   const dataCheckString = [...params.entries()]
@@ -51,15 +51,15 @@ function validateInitData(initData) {
 
   const authDate = Number(params.get("auth_date") || 0);
   if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_SECONDS) {
-    throw new AuthError("initData устарела, откройте приложение заново.");
+    throw new AuthError("initData застаріла, відкрийте застосунок ще раз.");
   }
 
   const userRaw = params.get("user");
-  if (!userRaw) throw new AuthError("В initData нет данных пользователя.");
+  if (!userRaw) throw new AuthError("У initData немає даних користувача.");
   const user = JSON.parse(userRaw);
 
   if (!ALLOWED_USER_IDS.has(String(user.id))) {
-    throw new AuthError(`Доступ запрещён для пользователя ${user.id}.`);
+    throw new AuthError(`Доступ заборонено для користувача ${user.id}.`);
   }
 
   return user;

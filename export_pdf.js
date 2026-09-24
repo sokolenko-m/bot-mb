@@ -1,53 +1,150 @@
 "use strict";
+const path = require("path");
 const PDFDocument = require("pdfkit");
+
+const LOGO_PATH = path.join(__dirname, "assets", "logo.png");
+const FONT_REGULAR = path.join(__dirname, "assets", "fonts", "DejaVuSans.ttf");
+const FONT_BOLD = path.join(__dirname, "assets", "fonts", "DejaVuSans-Bold.ttf");
+const BRAND_RED = "#C00000";
+const HEADER_BG = "#1A1A1A";
+const BORDER = "#CCCCCC";
+
+const MARGIN = 40;
+const PAGE_OPTS = { margin: MARGIN, size: "A4", layout: "landscape" };
+
+// [ключ, заголовок, ширина, вирівнювання]
+const COLUMNS = [
+  { key: "n", title: "№", width: 28, align: "center" },
+  { key: "object", title: "Об'єкт", width: 140, align: "left" },
+  { key: "title", title: "Найменування задачі", width: 340, align: "left" },
+  { key: "planned", title: "План, год", width: 76, align: "center" },
+  { key: "status", title: "Статус", width: 90, align: "center" },
+  { key: "fact", title: "Факт, год", width: 76, align: "center" },
+];
+const TABLE_WIDTH = COLUMNS.reduce((s, c) => s + c.width, 0);
+const CELL_PAD = 5;
+const ROW_MIN_HEIGHT = 20;
 
 function buildPdf({ constructorName, periodLabel, tasks, totals }) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 40, size: "A4", layout: "landscape" });
+    const doc = new PDFDocument(PAGE_OPTS);
     const chunks = [];
     doc.on("data", (c) => chunks.push(c));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    doc.fontSize(16).text(`Отчёт по загрузке: ${constructorName}`, { continued: false });
-    doc.fontSize(11).fillColor("#555").text(periodLabel);
-    doc.moveDown();
+    // Стандартні шрифти pdfkit (Helvetica тощо) не мають кириличних гліфів —
+    // без цього кирилиця/українські літери рендерились би "абракадаброю".
+    doc.registerFont("UA", FONT_REGULAR);
+    doc.registerFont("UA-Bold", FONT_BOLD);
 
-    const colX = [40, 340, 430, 530, 610, 690];
-    const colW = [300, 90, 100, 80, 80, 90];
-    const headers = ["Задача", "Начало", "Окончание (план)", "План, ч", "Факт, ч", "Статус"];
+    drawHeader(doc, constructorName, periodLabel);
+    let y = drawTableHeader(doc, MARGIN + 78);
 
-    doc.fillColor("#000").fontSize(10).font("Helvetica-Bold");
-    headers.forEach((h, i) => doc.text(h, colX[i], doc.y, { width: colW[i] }));
-    doc.moveDown(0.5);
-    doc.font("Helvetica");
+    for (const [i, t] of tasks.entries()) {
+      const row = {
+        n: String(i + 1),
+        object: t.objectName || "—",
+        title: t.title,
+        planned: String(t.plannedHours ?? ""),
+        status: t.status,
+        fact: t.factHours === null || t.factHours === undefined ? "" : String(t.factHours),
+      };
+      const rowHeight = computeRowHeight(doc, row);
 
-    for (const t of tasks) {
-      const y = doc.y;
-      if (y > 500) doc.addPage({ margin: 40, size: "A4", layout: "landscape" });
-      const rowY = doc.y;
-      doc.text(t.title, colX[0], rowY, { width: colW[0] });
-      doc.text(formatDate(t.start), colX[1], rowY, { width: colW[1] });
-      doc.text(formatDate(t.end), colX[2], rowY, { width: colW[2] });
-      doc.text(String(t.plannedHours ?? ""), colX[3], rowY, { width: colW[3] });
-      doc.text(String(t.factHours ?? ""), colX[4], rowY, { width: colW[4] });
-      doc.text(t.done ? "Завершена" : "В работе", colX[5], rowY, { width: colW[5] });
-      doc.moveDown(0.6);
+      if (y + rowHeight > doc.page.height - MARGIN) {
+        doc.addPage(PAGE_OPTS);
+        y = drawTableHeader(doc, MARGIN);
+      }
+      drawRow(doc, row, y, rowHeight, t.status);
+      y += rowHeight;
     }
 
-    doc.moveDown();
-    doc.font("Helvetica-Bold").text(
-      `Итого: план ${totals.plannedHours} ч, факт ${totals.factHours} ч, задач: ${totals.count}`
-    );
+    // --- підсумковий рядок ---
+    const totalRow = {
+      n: "",
+      object: "",
+      title: "Разом",
+      planned: String(totals.plannedHours),
+      status: `Задач: ${totals.count}`,
+      fact: String(totals.factHours),
+    };
+    const totalHeight = computeRowHeight(doc, totalRow);
+    if (y + totalHeight > doc.page.height - MARGIN) {
+      doc.addPage(PAGE_OPTS);
+      y = drawTableHeader(doc, MARGIN);
+    }
+    drawRow(doc, totalRow, y, totalHeight, null, true);
 
     doc.end();
   });
 }
 
-function formatDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+function drawHeader(doc, constructorName, periodLabel) {
+  try {
+    doc.image(LOGO_PATH, MARGIN, MARGIN, { width: 130 });
+  } catch {
+    /* лого не знайдено — продовжуємо без нього */
+  }
+
+  const textX = MARGIN + 150;
+  doc.font("UA-Bold").fontSize(18).fillColor("#000000").text("Графік завантаженості конструктора", textX, MARGIN, {
+    width: TABLE_WIDTH - 150,
+  });
+  doc.font("UA-Bold").fontSize(13).fillColor(BRAND_RED).text(constructorName, textX, doc.y + 4, {
+    width: TABLE_WIDTH - 150,
+  });
+  doc.font("UA").fontSize(10.5).fillColor("#555555").text(`Період: ${periodLabel}`, textX, doc.y + 4);
+}
+
+function drawTableHeader(doc, y) {
+  doc.font("UA-Bold").fontSize(9);
+  let maxLines = 1;
+  for (const col of COLUMNS) {
+    const h = doc.heightOfString(col.title, { width: col.width - 2 * CELL_PAD });
+    maxLines = Math.max(maxLines, Math.ceil(h / 11));
+  }
+  const height = Math.max(ROW_MIN_HEIGHT, maxLines * 11 + 2 * CELL_PAD);
+
+  let x = MARGIN;
+  doc.rect(MARGIN, y, TABLE_WIDTH, height).fill(HEADER_BG);
+  doc.fillColor("#FFFFFF");
+  for (const col of COLUMNS) {
+    doc.text(col.title, x + CELL_PAD, y + CELL_PAD, { width: col.width - 2 * CELL_PAD, align: col.align });
+    x += col.width;
+  }
+  return y + height;
+}
+
+function computeRowHeight(doc, row) {
+  doc.font("UA").fontSize(9);
+  let maxLines = 1;
+  for (const col of COLUMNS) {
+    const text = String(row[col.key] ?? "");
+    const h = doc.heightOfString(text, { width: col.width - 2 * CELL_PAD });
+    maxLines = Math.max(maxLines, Math.ceil(h / 11));
+  }
+  return Math.max(ROW_MIN_HEIGHT, maxLines * 11 + 2 * CELL_PAD);
+}
+
+function drawRow(doc, row, y, height, status, isTotal = false) {
+  let x = MARGIN;
+  if (isTotal) {
+    doc.rect(MARGIN, y, TABLE_WIDTH, height).fill("#F2F2F2");
+  }
+  doc.font(isTotal ? "UA-Bold" : "UA").fontSize(9);
+
+  for (const col of COLUMNS) {
+    doc.rect(x, y, col.width, height).stroke(BORDER);
+    let color = "#000000";
+    if (col.key === "status" && status === "Виконано") color = "#16A34A";
+    else if (col.key === "status" && status === "В роботі") color = BRAND_RED;
+    doc.fillColor(color).text(String(row[col.key] ?? ""), x + CELL_PAD, y + CELL_PAD, {
+      width: col.width - 2 * CELL_PAD,
+      align: col.align,
+    });
+    x += col.width;
+  }
 }
 
 module.exports = { buildPdf };

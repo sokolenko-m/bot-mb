@@ -1,9 +1,20 @@
 "use strict";
 const { getTasksForReport } = require("./notion");
 
-/** Builds the report payload (tasks + totals) for one constructor and period. */
+/** Обчислює статус життєвого циклу задачі станом на зараз. */
+function computeStatus(task, now = new Date()) {
+  if (task.done) return "Виконано";
+  const start = task.start ? new Date(task.start) : null;
+  if (start && start.getTime() > now.getTime()) return "Заплановано";
+  return "В роботі";
+}
+
+/** Формує дані звіту (задачі + підсумки) по одному конструктору за період. */
 async function buildReport(constructorId, startDateStr, endDateStr) {
-  const tasks = await getTasksForReport(constructorId, startDateStr, endDateStr);
+  const rawTasks = await getTasksForReport(constructorId, startDateStr, endDateStr);
+  const now = new Date();
+
+  const tasks = rawTasks.map((t) => ({ ...t, status: computeStatus(t, now) }));
 
   const totals = tasks.reduce(
     (acc, t) => {

@@ -21,11 +21,12 @@ const KEYS = {
   percent: "Виконання %",
   factEnd: "Факт. завершення",
   factHours: "Факт. трудозатраты, часы",
+  object: "🏗️ Об`єкт",
 };
 
 function assertConfigured() {
   if (!TOKEN || !DATA_SOURCE_ID) {
-    throw new Error("NOTION_TOKEN / NOTION_DATA_SOURCE_ID не заданы в переменных окружения.");
+    throw new Error("NOTION_TOKEN / NOTION_DATA_SOURCE_ID не задані в змінних оточення.");
   }
 }
 
@@ -65,7 +66,7 @@ async function queryAll(filter, sorts) {
 
 function getTitle(props) {
   const t = props[KEYS.title]?.title;
-  return t && t.length ? t.map((x) => x.plain_text).join("") : "(без названия)";
+  return t && t.length ? t.map((x) => x.plain_text).join("") : "(без назви)";
 }
 function getNumber(props, key, def = null) {
   const v = props[key]?.number;
@@ -76,6 +77,9 @@ function getDate(props, key) {
 }
 function getPeople(props, key) {
   return props[key]?.people || [];
+}
+function getRelationIds(props, key) {
+  return (props[key]?.relation || []).map((r) => r.id);
 }
 function isDone(props) {
   const pct = getNumber(props, KEYS.percent, 0);
@@ -90,15 +94,43 @@ async function listConstructors() {
   for (const page of all) {
     for (const person of getPeople(page.properties, KEYS.constructor)) {
       if (!map.has(person.id)) {
-        map.set(person.id, { id: person.id, name: person.name || "Без имени" });
+        map.set(person.id, { id: person.id, name: person.name || "Без імені" });
       }
     }
   }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "uk"));
+}
+
+// Кеш назв об'єктів (сторінки з пов'язаної бази) — назви змінюються рідко,
+// тримаємо в пам'яті процесу, щоб не запитувати ту саму сторінку двічі.
+const objectNameCache = new Map();
+
+async function resolvePageTitle(pageId) {
+  if (objectNameCache.has(pageId)) return objectNameCache.get(pageId);
+  try {
+    const page = await notionRequest("GET", `${API_BASE}/pages/${pageId}`);
+    const titleProp = Object.values(page.properties || {}).find((p) => p.type === "title");
+    const name = titleProp?.title?.length ? titleProp.title.map((x) => x.plain_text).join("") : "(без назви)";
+    objectNameCache.set(pageId, name);
+    return name;
+  } catch {
+    objectNameCache.set(pageId, "—");
+    return "—";
+  }
+}
+
+/** Дозаповнює task.objectName для кожної задачі за relation-полем "Об'єкт". */
+async function resolveObjectNames(tasks) {
+  const uniqueIds = [...new Set(tasks.flatMap((t) => t.objectIds))];
+  await Promise.all(uniqueIds.map((id) => resolvePageTitle(id)));
+  for (const t of tasks) {
+    t.objectName = t.objectIds.map((id) => objectNameCache.get(id)).filter(Boolean).join(", ") || "—";
+  }
+  return tasks;
 }
 
 /**
- * Задачи конструктора, начало которых попадает в период [startISO, endISO)
+ * Задачи конструктора, начало которых попадает в период [startDateStr, endDateStr)
  * (обе даты в формате YYYY-MM-DD). Возвращает отсортированный по дате начала список.
  */
 async function getTasksForReport(constructorId, startDateStr, endDateStr) {
@@ -111,7 +143,7 @@ async function getTasksForReport(constructorId, startDateStr, endDateStr) {
   };
   const pages = await queryAll(filter, [{ property: KEYS.start, direction: "ascending" }]);
 
-  return pages.map((p) => {
+  const tasks = pages.map((p) => {
     const props = p.properties;
     const start = getDate(props, KEYS.start);
     const end = getDate(props, KEYS.end);
@@ -126,8 +158,12 @@ async function getTasksForReport(constructorId, startDateStr, endDateStr) {
       factHours: getNumber(props, KEYS.factHours, null),
       done: isDone(props),
       factEnd: factEnd ? factEnd.start : null,
+      objectIds: getRelationIds(props, KEYS.object),
     };
   });
+
+  await resolveObjectNames(tasks);
+  return tasks;
 }
 
 module.exports = { listConstructors, getTasksForReport, KEYS };

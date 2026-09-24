@@ -4,7 +4,7 @@
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 async function sendDocument(chatId, buffer, filename, caption) {
-  if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN не задан на сервере.");
+  if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN не задано на сервері.");
 
   const form = new FormData();
   form.append("chat_id", String(chatId));
