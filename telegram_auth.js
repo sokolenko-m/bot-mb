@@ -58,7 +58,10 @@ function validateInitData(initData) {
   if (!userRaw) throw new AuthError("У initData немає даних користувача.");
   const user = JSON.parse(userRaw);
 
-  if (!ALLOWED_USER_IDS.has(String(user.id))) {
+  // Якщо ALLOWED_USER_IDS не задано (порожньо) — доступ відкритий для всіх,
+  // хто відкриє бота. Підпис initData все одно перевіряється вище, тобто
+  // підробити запит без справжнього Telegram неможливо в будь-якому разі.
+  if (ALLOWED_USER_IDS.size > 0 && !ALLOWED_USER_IDS.has(String(user.id))) {
     throw new AuthError(`Доступ заборонено для користувача ${user.id}.`);
   }
 
