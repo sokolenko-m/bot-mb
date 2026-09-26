@@ -14,13 +14,22 @@ const PAGE_OPTS = { margin: MARGIN, size: "A4", layout: "landscape" };
 
 // [ключ, заголовок, ширина, вирівнювання]
 const COLUMNS = [
-  { key: "n", title: "№", width: 28, align: "center" },
-  { key: "object", title: "Об'єкт", width: 140, align: "left" },
-  { key: "title", title: "Найменування задачі", width: 340, align: "left" },
-  { key: "planned", title: "План, год", width: 76, align: "center" },
-  { key: "status", title: "Статус", width: 90, align: "center" },
-  { key: "fact", title: "Факт, год", width: 76, align: "center" },
+  { key: "n", title: "№", width: 24, align: "center" },
+  { key: "object", title: "Об'єкт", width: 108, align: "left" },
+  { key: "title", title: "Найменування задачі", width: 258, align: "left" },
+  { key: "start", title: "Початок", width: 58, align: "center" },
+  { key: "end", title: "Кінець", width: 58, align: "center" },
+  { key: "planned", title: "План, год", width: 58, align: "center" },
+  { key: "status", title: "Статус", width: 78, align: "center" },
+  { key: "fact", title: "Факт, год", width: 58, align: "center" },
 ];
+
+function formatDateShort(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)}`;
+}
 const TABLE_WIDTH = COLUMNS.reduce((s, c) => s + c.width, 0);
 const CELL_PAD = 5;
 const ROW_MIN_HEIGHT = 20;
@@ -46,6 +55,8 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
         n: String(i + 1),
         object: t.objectName || "—",
         title: t.title,
+        start: formatDateShort(t.start),
+        end: formatDateShort(t.end),
         planned: String(t.plannedHours ?? ""),
         status: t.status,
         fact: t.factHours === null || t.factHours === undefined ? "" : String(t.factHours),
@@ -65,6 +76,8 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
       n: "",
       object: "",
       title: "Разом",
+      start: "",
+      end: "",
       planned: String(totals.plannedHours),
       status: `Задач: ${totals.count}`,
       fact: String(totals.factHours),

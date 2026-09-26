@@ -35,19 +35,26 @@ app.get("/api/objects", requireTelegramAuth, async (req, res) => {
 });
 
 function reportOptionsFromBody(body) {
-  const { startDate, endDate, objectId } = body || {};
-  if (objectId) return { objectId };
+  const { startDate, endDate, objectIds, objectNames } = body || {};
+  if (Array.isArray(objectIds) && objectIds.length > 0) return { objectIds, objectNames };
   return { startDateStr: startDate, endDateStr: endDate };
+}
+
+function validateReportParams(body) {
+  const { constructorId, startDate, endDate, objectIds } = body || {};
+  if (!constructorId) return "Потрібен constructorId.";
+  const hasObjects = Array.isArray(objectIds) && objectIds.length > 0;
+  if (!hasObjects && (!startDate || !endDate)) {
+    return "Потрібен період (startDate, endDate) або хоча б один об'єкт.";
+  }
+  return null;
 }
 
 app.post("/api/report", requireTelegramAuth, async (req, res) => {
   try {
-    const { constructorId, startDate, endDate, objectId } = req.body || {};
-    if (!constructorId) return res.status(400).json({ error: "Потрібен constructorId." });
-    if (!objectId && (!startDate || !endDate)) {
-      return res.status(400).json({ error: "Потрібен період (startDate, endDate) або objectId." });
-    }
-    res.json(await buildReport(constructorId, reportOptionsFromBody(req.body)));
+    const error = validateReportParams(req.body);
+    if (error) return res.status(400).json({ error });
+    res.json(await buildReport(req.body.constructorId, reportOptionsFromBody(req.body)));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -55,16 +62,13 @@ app.post("/api/report", requireTelegramAuth, async (req, res) => {
 
 app.post("/api/export", requireTelegramAuth, async (req, res) => {
   try {
-    const { constructorId, constructorName, startDate, endDate, objectId, periodLabel, format } = req.body || {};
-    if (!constructorId || !format) {
-      return res.status(400).json({ error: "Потрібні constructorId, format." });
-    }
-    if (!objectId && (!startDate || !endDate)) {
-      return res.status(400).json({ error: "Потрібен період (startDate, endDate) або objectId." });
-    }
+    const { constructorId, constructorName, format } = req.body || {};
+    const error = validateReportParams(req.body);
+    if (error) return res.status(400).json({ error });
+    if (!format) return res.status(400).json({ error: "Потрібен format." });
 
-    const { tasks, totals } = await buildReport(constructorId, reportOptionsFromBody(req.body));
-    const payload = { constructorName: constructorName || "Конструктор", periodLabel: periodLabel || "", tasks, totals };
+    const { tasks, totals, periodLabel } = await buildReport(constructorId, reportOptionsFromBody(req.body));
+    const payload = { constructorName: constructorName || "Конструктор", periodLabel, tasks, totals };
 
     let buffer, filename;
     if (format === "xlsx") {

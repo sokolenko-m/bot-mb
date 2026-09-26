@@ -6,17 +6,25 @@ const LOGO_PATH = path.join(__dirname, "assets", "logo.png");
 const BRAND_RED = "FFC00000";
 const HEADER_BG = "FF1A1A1A";
 
+function formatDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
 async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   const wb = new ExcelJS.Workbook();
   const sheet = wb.addWorksheet("Графік завантаженості");
 
   sheet.columns = [
     { width: 5 }, // №
-    { width: 26 }, // Об'єкт
-    { width: 52 }, // Найменування задачі
-    { width: 14 }, // Трудозатрати, год
-    { width: 16 }, // Статус
-    { width: 16 }, // Факт. трудозатрати, год
+    { width: 22 }, // Об'єкт
+    { width: 42 }, // Найменування задачі
+    { width: 12 }, // Початок
+    { width: 12 }, // Кінець
+    { width: 10 }, // План, год
+    { width: 14 }, // Статус
+    { width: 12 }, // Факт, год
   ];
 
   // --- лого ---
@@ -27,19 +35,19 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   sheet.getRow(3).height = 22;
 
   // --- заголовок ---
-  sheet.mergeCells("B1:F1");
+  sheet.mergeCells("B1:H1");
   const titleCell = sheet.getCell("B1");
   titleCell.value = "Графік завантаженості конструктора";
   titleCell.font = { bold: true, size: 16, color: { argb: "FF000000" } };
   titleCell.alignment = { vertical: "middle" };
 
-  sheet.mergeCells("B2:F2");
+  sheet.mergeCells("B2:H2");
   const nameCell = sheet.getCell("B2");
   nameCell.value = constructorName;
   nameCell.font = { bold: true, size: 13, color: { argb: BRAND_RED } };
   nameCell.alignment = { vertical: "middle" };
 
-  sheet.mergeCells("B3:F3");
+  sheet.mergeCells("B3:H3");
   const periodCell = sheet.getCell("B3");
   periodCell.value = `Період: ${periodLabel}`;
   periodCell.font = { size: 11, color: { argb: "FF555555" } };
@@ -48,7 +56,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   sheet.addRow([]);
 
   // --- шапка таблиці ---
-  const headerRow = sheet.addRow(["№", "Об'єкт", "Найменування задачі", "Трудозатрати, год", "Статус", "Факт. трудозатрати, год"]);
+  const headerRow = sheet.addRow(["№", "Об'єкт", "Найменування задачі", "Початок", "Кінець", "План, год", "Статус", "Факт, год"]);
   headerRow.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
@@ -58,18 +66,28 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   headerRow.height = 26;
 
   // --- рядки задач ---
+  const CENTER_COLS = new Set([1, 4, 5, 6, 8]);
   tasks.forEach((t, i) => {
-    const row = sheet.addRow([i + 1, t.objectName || "—", t.title, t.plannedHours || 0, t.status, t.factHours ?? ""]);
+    const row = sheet.addRow([
+      i + 1,
+      t.objectName || "—",
+      t.title,
+      formatDate(t.start),
+      formatDate(t.end),
+      t.plannedHours || 0,
+      t.status,
+      t.factHours ?? "",
+    ]);
     row.eachCell((cell, colNumber) => {
       cell.border = thinBorder();
-      cell.alignment = { vertical: "middle", wrapText: colNumber === 3, horizontal: colNumber === 1 || colNumber === 4 || colNumber === 6 ? "center" : "left" };
+      cell.alignment = { vertical: "middle", wrapText: colNumber === 3, horizontal: CENTER_COLS.has(colNumber) ? "center" : "left" };
     });
-    if (t.status === "Виконано") row.getCell(5).font = { color: { argb: "FF16A34A" } };
-    else if (t.status === "В роботі") row.getCell(5).font = { color: { argb: BRAND_RED } };
+    if (t.status === "Виконано") row.getCell(7).font = { color: { argb: "FF16A34A" } };
+    else if (t.status === "В роботі") row.getCell(7).font = { color: { argb: BRAND_RED } };
   });
 
   // --- підсумок ---
-  const totalRow = sheet.addRow(["", "", "Разом", totals.plannedHours, `Задач: ${totals.count}`, totals.factHours]);
+  const totalRow = sheet.addRow(["", "", "Разом", "", "", totals.plannedHours, `Задач: ${totals.count}`, totals.factHours]);
   totalRow.eachCell((cell) => {
     cell.font = { bold: true };
     cell.border = thinBorder();

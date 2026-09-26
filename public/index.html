@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Звіт по завантаженості</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/uk.js"></script>
 <style>
   :root {
     --bg: var(--tg-theme-bg-color, #ffffff);
@@ -27,12 +30,16 @@
   .brand img { height: 26px; }
   h1 { font-size: 17px; margin: 4px 0 14px; }
   label { display: block; font-size: 13px; color: var(--hint); margin: 12px 0 4px; }
-  select, input[type=date] {
+  select, input[type=text] {
     width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--secondary-bg);
     background: var(--secondary-bg); color: var(--text); font-size: 15px;
   }
-  .row { display: flex; gap: 8px; }
-  .row > * { flex: 1; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--secondary-bg);
+    background: var(--secondary-bg); color: var(--text); font-size: 12.5px; cursor: pointer;
+  }
+  .chip.active { background: var(--button); color: var(--button-text); border-color: var(--button); }
   .presets { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
   .preset-btn {
     padding: 6px 10px; border-radius: 999px; border: 1px solid var(--secondary-bg);
@@ -51,8 +58,10 @@
   }
   #summary { margin-top: 18px; padding: 12px; background: var(--secondary-bg); border-radius: 12px; font-size: 14px; }
   #summary b { font-size: 16px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
-  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--secondary-bg); vertical-align: top; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; min-width: 560px; border-collapse: collapse; margin-top: 14px; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--secondary-bg); vertical-align: top; white-space: nowrap; }
+  th:nth-child(2), td:nth-child(2) { white-space: normal; min-width: 200px; }
   th { color: var(--hint); font-weight: 600; }
   .status-done { color: #16a34a; }
   .status-open { color: #c00000; }
@@ -70,15 +79,12 @@
   <label>Конструктор</label>
   <select id="constructor"><option>Завантаження...</option></select>
 
-  <label>Об'єкт</label>
-  <select id="object"><option value="">Всі об'єкти (за період)</option></select>
+  <label>Об'єкт (можна декілька)</label>
+  <div class="chips" id="object-chips"></div>
 
   <div id="period-section">
     <label>Період</label>
-    <div class="row">
-      <input type="date" id="startDate" />
-      <input type="date" id="endDate" />
-    </div>
+    <input type="text" id="dateRangeInput" placeholder="Оберіть період" readonly />
     <div class="presets">
       <button class="preset-btn" data-preset="today">Сьогодні</button>
       <button class="preset-btn" data-preset="this-week">Цей тиждень</button>
@@ -88,7 +94,7 @@
       <button class="preset-btn" data-preset="last-month">Минулий місяць</button>
     </div>
   </div>
-  <div id="object-note" class="hint" hidden>Буде показано весь період роботи конструктора на цьому об'єкті.</div>
+  <div id="object-note" class="hint" hidden>Буде показано весь період роботи конструктора на обраних об'єктах.</div>
 
   <button class="primary" id="btn-report">Сформувати звіт</button>
   <div id="msg"></div>
@@ -100,12 +106,14 @@
     <button id="btn-pdf">Завантажити PDF</button>
   </div>
 
-  <table id="table" hidden>
-    <thead>
-      <tr><th>Об'єкт</th><th>Найменування задачі</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
-    </thead>
-    <tbody id="table-body"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table id="table" hidden>
+      <thead>
+        <tr><th>Об'єкт</th><th>Найменування задачі</th><th>Початок</th><th>Кінець</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
 
 <script>
 const tg = window.Telegram?.WebApp;
@@ -116,9 +124,18 @@ const $ = (s) => document.querySelector(s);
 let currentReport = null;
 let currentConstructorName = "";
 let currentPeriodLabel = "";
+const selectedObjectIds = new Set();
+let objectNamesById = {};
 
 function pad(n) { return String(n).padStart(2, "0"); }
 function toDateStr(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+
+const fp = flatpickr("#dateRangeInput", {
+  mode: "range",
+  dateFormat: "d.m.Y",
+  locale: (typeof flatpickr !== "undefined" && flatpickr.l10ns.uk) ? "uk" : undefined,
+});
+fp.l10n.rangeSeparator = " – ";
 
 function setPreset(preset) {
   const now = new Date();
@@ -144,13 +161,19 @@ function setPreset(preset) {
     start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     end = new Date(now.getFullYear(), now.getMonth(), 1);
   }
-  $("#startDate").value = toDateStr(start);
-  $("#endDate").value = toDateStr(end);
+  // кінцева дата пресетів обчислена як "до наступного дня" (ексклюзивно) —
+  // для показу в календарі віднімаємо 1 день, для фільтра на бекенді лишаємо як є
+  const endInclusive = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
+  fp.setDate([start, endInclusive], true);
   document.querySelectorAll(".preset-btn").forEach((b) => b.classList.toggle("active", b.dataset.preset === preset));
 }
 
 document.querySelectorAll(".preset-btn").forEach((b) => b.addEventListener("click", () => setPreset(b.dataset.preset)));
 setPreset("this-month");
+
+fp.config.onChange.push(() => {
+  document.querySelectorAll(".preset-btn").forEach((b) => b.classList.remove("active"));
+});
 
 async function api(path, options = {}) {
   const resp = await fetch(path, {
@@ -181,26 +204,64 @@ async function loadConstructors() {
   }
 }
 
+function renderObjectChips(list) {
+  objectNamesById = Object.fromEntries(list.map((o) => [o.id, o.name]));
+  selectedObjectIds.clear();
+  const container = $("#object-chips");
+  container.innerHTML = "";
+  const allChip = document.createElement("button");
+  allChip.className = "chip active";
+  allChip.textContent = "Всі об'єкти (за період)";
+  allChip.dataset.id = "";
+  container.appendChild(allChip);
+  for (const o of list) {
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.textContent = o.name;
+    chip.dataset.id = o.id;
+    container.appendChild(chip);
+  }
+  container.querySelectorAll(".chip").forEach((chip) => chip.addEventListener("click", () => onChipClick(chip)));
+  applyObjectMode();
+}
+
+function onChipClick(chip) {
+  const id = chip.dataset.id;
+  if (id === "") {
+    selectedObjectIds.clear();
+  } else {
+    if (selectedObjectIds.has(id)) selectedObjectIds.delete(id);
+    else selectedObjectIds.add(id);
+    if (selectedObjectIds.size === 0) {
+      // нічого не обрано — повертаємось у режим "всі об'єкти"
+    }
+  }
+  document.querySelectorAll("#object-chips .chip").forEach((c) => {
+    const active = c.dataset.id === "" ? selectedObjectIds.size === 0 : selectedObjectIds.has(c.dataset.id);
+    c.classList.toggle("active", active);
+  });
+  applyObjectMode();
+}
+
 async function loadObjects(constructorId) {
-  const sel = $("#object");
-  sel.innerHTML = `<option value="">Всі об'єкти (за період)</option>`;
+  const container = $("#object-chips");
+  container.innerHTML = "";
   if (!constructorId) return;
   try {
     const list = await api(`/api/objects?constructorId=${encodeURIComponent(constructorId)}`);
-    sel.innerHTML += list.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join("");
+    renderObjectChips(list);
   } catch (e) {
     showMsg(e.message, "error");
   }
 }
 
 function applyObjectMode() {
-  const isObjectMode = Boolean($("#object").value);
+  const isObjectMode = selectedObjectIds.size > 0;
   $("#period-section").hidden = isObjectMode;
   $("#object-note").hidden = !isObjectMode;
 }
 
 $("#constructor").addEventListener("change", (e) => loadObjects(e.target.value));
-$("#object").addEventListener("change", applyObjectMode);
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -216,15 +277,17 @@ const STATUS_CLASS = { "Виконано": "status-done", "В роботі": "st
 
 function currentRequestPayload() {
   const constructorId = $("#constructor").value;
-  const objectId = $("#object").value;
-  if (objectId) {
-    const objectName = $("#object").selectedOptions[0]?.textContent || "";
-    return { constructorId, objectId, periodLabel: `Об'єкт: ${objectName} (весь період)` };
+  if (selectedObjectIds.size > 0) {
+    const objectIds = [...selectedObjectIds];
+    const objectNames = objectIds.map((id) => objectNamesById[id]).join(", ");
+    return { constructorId, objectIds, objectNames };
   }
-  const startDate = $("#startDate").value;
-  const endDate = $("#endDate").value;
-  if (!startDate || !endDate) return null;
-  return { constructorId, startDate, endDate, periodLabel: `${formatDateShort(startDate)}–${formatDateShort(endDate)}` };
+  const dates = fp.selectedDates;
+  if (dates.length < 2) return null;
+  const startDate = toDateStr(dates[0]);
+  const endExclusive = new Date(dates[1].getFullYear(), dates[1].getMonth(), dates[1].getDate() + 1);
+  const endDate = toDateStr(endExclusive);
+  return { constructorId, startDate, endDate };
 }
 
 $("#btn-report").addEventListener("click", async () => {
@@ -234,13 +297,13 @@ $("#btn-report").addEventListener("click", async () => {
     return;
   }
   currentConstructorName = $("#constructor").selectedOptions[0]?.textContent || "";
-  currentPeriodLabel = payload.periodLabel;
 
   showMsg("Формую звіт...");
   $("#btn-report").disabled = true;
   try {
     const report = await api("/api/report", { method: "POST", body: JSON.stringify(payload) });
     currentReport = report;
+    currentPeriodLabel = report.periodLabel;
     renderReport(report);
     showMsg("");
   } catch (e) {
@@ -252,7 +315,7 @@ $("#btn-report").addEventListener("click", async () => {
 
 function renderReport(report) {
   $("#summary").hidden = false;
-  $("#summary").innerHTML = `<b>${report.totals.plannedHours} год</b> план · <b>${report.totals.factHours} год</b> факт · задач: ${report.totals.count}`;
+  $("#summary").innerHTML = `<div>${escapeHtml(report.periodLabel)}</div><b>${report.totals.plannedHours} год</b> план · <b>${report.totals.factHours} год</b> факт · задач: ${report.totals.count}`;
 
   $("#export-row").hidden = report.tasks.length === 0;
 
@@ -267,6 +330,8 @@ function renderReport(report) {
       (t) => `<tr>
         <td>${escapeHtml(t.objectName || "—")}</td>
         <td>${escapeHtml(t.title)}</td>
+        <td>${formatDateShort(t.start)}</td>
+        <td>${formatDateShort(t.end)}</td>
         <td>${t.plannedHours ?? ""}</td>
         <td>${t.factHours ?? ""}</td>
         <td class="${STATUS_CLASS[t.status] || ""}">${t.status}</td>
@@ -283,12 +348,7 @@ async function doExport(format) {
   try {
     await api("/api/export", {
       method: "POST",
-      body: JSON.stringify({
-        ...payload,
-        constructorName: currentConstructorName,
-        periodLabel: currentPeriodLabel,
-        format,
-      }),
+      body: JSON.stringify({ ...payload, constructorName: currentConstructorName, format }),
     });
     showMsg("Надіслано вам у чат з ботом ✓", "ok");
     tg?.HapticFeedback?.notificationOccurred("success");

@@ -143,15 +143,19 @@ async function listObjectsForConstructor(constructorId) {
 /**
  * Задачи конструктора. Якщо задано startDateStr/endDateStr (YYYY-MM-DD) —
  * фільтрує за датою початку в межах [startDateStr, endDateStr). Якщо задано
- * objectId — фільтрує лише задачі цього об'єкта (тоді період можна не
- * вказувати — повертається весь час роботи на об'єкті). Сортування за датою
- * початку.
+ * objectIds (один або декілька id) — фільтрує задачі, що належать хоча б
+ * одному з цих об'єктів (тоді період можна не вказувати — повертається весь
+ * час роботи на цих об'єктах). Сортування за датою початку.
  */
-async function getTasksForReport(constructorId, { startDateStr, endDateStr, objectId } = {}) {
+async function getTasksForReport(constructorId, { startDateStr, endDateStr, objectIds } = {}) {
   const and = [{ property: KEYS.constructor, people: { contains: constructorId } }];
   if (startDateStr) and.push({ property: KEYS.start, date: { on_or_after: startDateStr } });
   if (endDateStr) and.push({ property: KEYS.start, date: { before: endDateStr } });
-  if (objectId) and.push({ property: KEYS.object, relation: { contains: objectId } });
+  if (objectIds && objectIds.length === 1) {
+    and.push({ property: KEYS.object, relation: { contains: objectIds[0] } });
+  } else if (objectIds && objectIds.length > 1) {
+    and.push({ or: objectIds.map((id) => ({ property: KEYS.object, relation: { contains: id } })) });
+  }
   const filter = and.length > 1 ? { and } : and[0];
 
   const pages = await queryAll(filter, [{ property: KEYS.start, direction: "ascending" }]);
