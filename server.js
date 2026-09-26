@@ -2,7 +2,7 @@
 const path = require("path");
 const express = require("express");
 
-const { listConstructors } = require("./notion");
+const { listConstructors, listObjectsForConstructor } = require("./notion");
 const { buildReport } = require("./report");
 const { buildXlsx } = require("./export_xlsx");
 const { buildPdf } = require("./export_pdf");
@@ -24,13 +24,30 @@ app.get("/api/constructors", requireTelegramAuth, async (req, res) => {
   }
 });
 
+app.get("/api/objects", requireTelegramAuth, async (req, res) => {
+  try {
+    const { constructorId } = req.query;
+    if (!constructorId) return res.status(400).json({ error: "Потрібен constructorId." });
+    res.json(await listObjectsForConstructor(constructorId));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+function reportOptionsFromBody(body) {
+  const { startDate, endDate, objectId } = body || {};
+  if (objectId) return { objectId };
+  return { startDateStr: startDate, endDateStr: endDate };
+}
+
 app.post("/api/report", requireTelegramAuth, async (req, res) => {
   try {
-    const { constructorId, startDate, endDate } = req.body || {};
-    if (!constructorId || !startDate || !endDate) {
-      return res.status(400).json({ error: "Потрібні constructorId, startDate, endDate." });
+    const { constructorId, startDate, endDate, objectId } = req.body || {};
+    if (!constructorId) return res.status(400).json({ error: "Потрібен constructorId." });
+    if (!objectId && (!startDate || !endDate)) {
+      return res.status(400).json({ error: "Потрібен період (startDate, endDate) або objectId." });
     }
-    res.json(await buildReport(constructorId, startDate, endDate));
+    res.json(await buildReport(constructorId, reportOptionsFromBody(req.body)));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -38,12 +55,15 @@ app.post("/api/report", requireTelegramAuth, async (req, res) => {
 
 app.post("/api/export", requireTelegramAuth, async (req, res) => {
   try {
-    const { constructorId, constructorName, startDate, endDate, periodLabel, format } = req.body || {};
-    if (!constructorId || !startDate || !endDate || !format) {
-      return res.status(400).json({ error: "Потрібні constructorId, startDate, endDate, format." });
+    const { constructorId, constructorName, startDate, endDate, objectId, periodLabel, format } = req.body || {};
+    if (!constructorId || !format) {
+      return res.status(400).json({ error: "Потрібні constructorId, format." });
+    }
+    if (!objectId && (!startDate || !endDate)) {
+      return res.status(400).json({ error: "Потрібен період (startDate, endDate) або objectId." });
     }
 
-    const { tasks, totals } = await buildReport(constructorId, startDate, endDate);
+    const { tasks, totals } = await buildReport(constructorId, reportOptionsFromBody(req.body));
     const payload = { constructorName: constructorName || "Конструктор", periodLabel: periodLabel || "", tasks, totals };
 
     let buffer, filename;

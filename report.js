@@ -9,9 +9,14 @@ function computeStatus(task, now = new Date()) {
   return "В роботі";
 }
 
-/** Формує дані звіту (задачі + підсумки) по одному конструктору за період. */
-async function buildReport(constructorId, startDateStr, endDateStr) {
-  const rawTasks = await getTasksForReport(constructorId, startDateStr, endDateStr);
+/**
+ * Формує дані звіту (задачі + підсумки) по одному конструктору.
+ * options: { startDateStr, endDateStr } для звіту за період,
+ * або { objectId } для звіту за весь час роботи на конкретному об'єкті
+ * (період тоді ігнорується).
+ */
+async function buildReport(constructorId, options = {}) {
+  const rawTasks = await getTasksForReport(constructorId, options.objectId ? { objectId: options.objectId } : options);
   const now = new Date();
 
   const tasks = rawTasks.map((t) => ({ ...t, status: computeStatus(t, now) }));

@@ -60,6 +60,7 @@
   #msg { margin-top: 12px; font-size: 13px; color: var(--hint); min-height: 18px; }
   #msg.error { color: #dc2626; }
   #msg.ok { color: #16a34a; }
+  .hint { margin-top: 10px; font-size: 12.5px; color: var(--hint); }
 </style>
 </head>
 <body>
@@ -69,19 +70,25 @@
   <label>Конструктор</label>
   <select id="constructor"><option>Завантаження...</option></select>
 
-  <label>Період</label>
-  <div class="row">
-    <input type="date" id="startDate" />
-    <input type="date" id="endDate" />
+  <label>Об'єкт</label>
+  <select id="object"><option value="">Всі об'єкти (за період)</option></select>
+
+  <div id="period-section">
+    <label>Період</label>
+    <div class="row">
+      <input type="date" id="startDate" />
+      <input type="date" id="endDate" />
+    </div>
+    <div class="presets">
+      <button class="preset-btn" data-preset="today">Сьогодні</button>
+      <button class="preset-btn" data-preset="this-week">Цей тиждень</button>
+      <button class="preset-btn" data-preset="next-week">Наступний тиждень</button>
+      <button class="preset-btn" data-preset="this-month">Цей місяць</button>
+      <button class="preset-btn" data-preset="next-month">Наступний місяць</button>
+      <button class="preset-btn" data-preset="last-month">Минулий місяць</button>
+    </div>
   </div>
-  <div class="presets">
-    <button class="preset-btn" data-preset="today">Сьогодні</button>
-    <button class="preset-btn" data-preset="this-week">Цей тиждень</button>
-    <button class="preset-btn" data-preset="next-week">Наступний тиждень</button>
-    <button class="preset-btn" data-preset="this-month">Цей місяць</button>
-    <button class="preset-btn" data-preset="next-month">Наступний місяць</button>
-    <button class="preset-btn" data-preset="last-month">Минулий місяць</button>
-  </div>
+  <div id="object-note" class="hint" hidden>Буде показано весь період роботи конструктора на цьому об'єкті.</div>
 
   <button class="primary" id="btn-report">Сформувати звіт</button>
   <div id="msg"></div>
@@ -167,11 +174,33 @@ async function loadConstructors() {
     const list = await api("/api/constructors");
     sel.innerHTML = list.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
     if (list.length === 0) sel.innerHTML = "<option>Не знайдено</option>";
+    else loadObjects(sel.value);
   } catch (e) {
     sel.innerHTML = "<option>Помилка завантаження</option>";
     showMsg(e.message, "error");
   }
 }
+
+async function loadObjects(constructorId) {
+  const sel = $("#object");
+  sel.innerHTML = `<option value="">Всі об'єкти (за період)</option>`;
+  if (!constructorId) return;
+  try {
+    const list = await api(`/api/objects?constructorId=${encodeURIComponent(constructorId)}`);
+    sel.innerHTML += list.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join("");
+  } catch (e) {
+    showMsg(e.message, "error");
+  }
+}
+
+function applyObjectMode() {
+  const isObjectMode = Boolean($("#object").value);
+  $("#period-section").hidden = isObjectMode;
+  $("#object-note").hidden = !isObjectMode;
+}
+
+$("#constructor").addEventListener("change", (e) => loadObjects(e.target.value));
+$("#object").addEventListener("change", applyObjectMode);
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -185,21 +214,32 @@ function formatDateShort(iso) {
 
 const STATUS_CLASS = { "Виконано": "status-done", "В роботі": "status-open", "Заплановано": "status-planned" };
 
-$("#btn-report").addEventListener("click", async () => {
+function currentRequestPayload() {
   const constructorId = $("#constructor").value;
+  const objectId = $("#object").value;
+  if (objectId) {
+    const objectName = $("#object").selectedOptions[0]?.textContent || "";
+    return { constructorId, objectId, periodLabel: `Об'єкт: ${objectName} (весь період)` };
+  }
   const startDate = $("#startDate").value;
   const endDate = $("#endDate").value;
-  if (!constructorId || !startDate || !endDate) {
-    showMsg("Оберіть конструктора та період.", "error");
+  if (!startDate || !endDate) return null;
+  return { constructorId, startDate, endDate, periodLabel: `${formatDateShort(startDate)}–${formatDateShort(endDate)}` };
+}
+
+$("#btn-report").addEventListener("click", async () => {
+  const payload = currentRequestPayload();
+  if (!payload) {
+    showMsg("Оберіть конструктора та період (або об'єкт).", "error");
     return;
   }
   currentConstructorName = $("#constructor").selectedOptions[0]?.textContent || "";
-  currentPeriodLabel = `${formatDateShort(startDate)}–${formatDateShort(endDate)}`;
+  currentPeriodLabel = payload.periodLabel;
 
   showMsg("Формую звіт...");
   $("#btn-report").disabled = true;
   try {
-    const report = await api("/api/report", { method: "POST", body: JSON.stringify({ constructorId, startDate, endDate }) });
+    const report = await api("/api/report", { method: "POST", body: JSON.stringify(payload) });
     currentReport = report;
     renderReport(report);
     showMsg("");
@@ -237,18 +277,15 @@ function renderReport(report) {
 
 async function doExport(format) {
   if (!currentReport) return;
-  const constructorId = $("#constructor").value;
-  const startDate = $("#startDate").value;
-  const endDate = $("#endDate").value;
+  const payload = currentRequestPayload();
+  if (!payload) return;
   showMsg("Готую файл і надсилаю в чат...");
   try {
     await api("/api/export", {
       method: "POST",
       body: JSON.stringify({
-        constructorId,
+        ...payload,
         constructorName: currentConstructorName,
-        startDate,
-        endDate,
         periodLabel: currentPeriodLabel,
         format,
       }),

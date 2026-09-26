@@ -129,18 +129,31 @@ async function resolveObjectNames(tasks) {
   return tasks;
 }
 
+/** Об'єкти, на яких коли-небудь працював цей конструктор — {id, name}. */
+async function listObjectsForConstructor(constructorId) {
+  const filter = { property: KEYS.constructor, people: { contains: constructorId } };
+  const pages = await queryAll(filter);
+  const ids = [...new Set(pages.flatMap((p) => getRelationIds(p.properties, KEYS.object)))];
+  await Promise.all(ids.map((id) => resolvePageTitle(id)));
+  return ids
+    .map((id) => ({ id, name: objectNameCache.get(id) || "—" }))
+    .sort((a, b) => a.name.localeCompare(b.name, "uk"));
+}
+
 /**
- * Задачи конструктора, начало которых попадает в период [startDateStr, endDateStr)
- * (обе даты в формате YYYY-MM-DD). Возвращает отсортированный по дате начала список.
+ * Задачи конструктора. Якщо задано startDateStr/endDateStr (YYYY-MM-DD) —
+ * фільтрує за датою початку в межах [startDateStr, endDateStr). Якщо задано
+ * objectId — фільтрує лише задачі цього об'єкта (тоді період можна не
+ * вказувати — повертається весь час роботи на об'єкті). Сортування за датою
+ * початку.
  */
-async function getTasksForReport(constructorId, startDateStr, endDateStr) {
-  const filter = {
-    and: [
-      { property: KEYS.constructor, people: { contains: constructorId } },
-      { property: KEYS.start, date: { on_or_after: startDateStr } },
-      { property: KEYS.start, date: { before: endDateStr } },
-    ],
-  };
+async function getTasksForReport(constructorId, { startDateStr, endDateStr, objectId } = {}) {
+  const and = [{ property: KEYS.constructor, people: { contains: constructorId } }];
+  if (startDateStr) and.push({ property: KEYS.start, date: { on_or_after: startDateStr } });
+  if (endDateStr) and.push({ property: KEYS.start, date: { before: endDateStr } });
+  if (objectId) and.push({ property: KEYS.object, relation: { contains: objectId } });
+  const filter = and.length > 1 ? { and } : and[0];
+
   const pages = await queryAll(filter, [{ property: KEYS.start, direction: "ascending" }]);
 
   const tasks = pages.map((p) => {
@@ -166,4 +179,4 @@ async function getTasksForReport(constructorId, startDateStr, endDateStr) {
   return tasks;
 }
 
-module.exports = { listConstructors, getTasksForReport, KEYS };
+module.exports = { listConstructors, listObjectsForConstructor, getTasksForReport, KEYS };
