@@ -72,6 +72,25 @@ function getNumber(props, key, def = null) {
   const v = props[key]?.number;
   return v === null || v === undefined ? def : v;
 }
+/**
+ * "Порядок" зберігається як число, але в частині баз/через певні
+ * автоматизації Notion перетворює таке поле на тип url (число як текст
+ * посилання) — тому читаємо обидва варіанти, а не лише .number.
+ */
+function getOrderNumber(props, key, def = 0) {
+  const v = props[key];
+  if (!v) return def;
+  if (v.type === "number") return v.number ?? def;
+  if (v.type === "url" && v.url) {
+    const n = parseFloat(v.url);
+    return Number.isNaN(n) ? def : n;
+  }
+  if (v.type === "rich_text" && v.rich_text?.length) {
+    const n = parseFloat(v.rich_text.map((x) => x.plain_text).join(""));
+    return Number.isNaN(n) ? def : n;
+  }
+  return def;
+}
 function getDate(props, key) {
   return props[key]?.date || null;
 }
@@ -168,7 +187,7 @@ async function getTasksForReport(constructorId, { startDateStr, endDateStr, obje
     return {
       id: p.id,
       title: getTitle(props),
-      order: getNumber(props, KEYS.order, 0),
+      order: getOrderNumber(props, KEYS.order, 0),
       start: start ? start.start : null,
       end: end ? end.start : null,
       plannedHours: getNumber(props, KEYS.plannedHours, 0) || 0,

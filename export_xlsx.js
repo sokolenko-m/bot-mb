@@ -67,9 +67,9 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
 
   // --- рядки задач ---
   const CENTER_COLS = new Set([1, 4, 5, 6, 8]);
-  tasks.forEach((t, i) => {
+  tasks.forEach((t) => {
     const row = sheet.addRow([
-      i + 1,
+      Math.round((t.order ?? 0) * 10) / 10,
       t.objectName || "—",
       t.title,
       formatDate(t.start),

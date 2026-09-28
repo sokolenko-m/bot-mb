@@ -14,15 +14,20 @@ const PAGE_OPTS = { margin: MARGIN, size: "A4", layout: "landscape" };
 
 // [ключ, заголовок, ширина, вирівнювання]
 const COLUMNS = [
-  { key: "n", title: "№", width: 24, align: "center" },
-  { key: "object", title: "Об'єкт", width: 108, align: "left" },
-  { key: "title", title: "Найменування задачі", width: 258, align: "left" },
+  { key: "n", title: "№", width: 34, align: "center" },
+  { key: "object", title: "Об'єкт", width: 100, align: "left" },
+  { key: "title", title: "Найменування задачі", width: 256, align: "left" },
   { key: "start", title: "Початок", width: 58, align: "center" },
   { key: "end", title: "Кінець", width: 58, align: "center" },
   { key: "planned", title: "План, год", width: 58, align: "center" },
   { key: "status", title: "Статус", width: 78, align: "center" },
   { key: "fact", title: "Факт, год", width: 58, align: "center" },
 ];
+
+function formatOrder(order) {
+  if (order === null || order === undefined) return "";
+  return String(Math.round(order * 10) / 10);
+}
 
 function formatDateShort(iso) {
   if (!iso) return "";
@@ -50,9 +55,9 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
     drawHeader(doc, constructorName, periodLabel);
     let y = drawTableHeader(doc, MARGIN + 78);
 
-    for (const [i, t] of tasks.entries()) {
+    for (const t of tasks) {
       const row = {
-        n: String(i + 1),
+        n: formatOrder(t.order),
         object: t.objectName || "—",
         title: t.title,
         start: formatDateShort(t.start),
