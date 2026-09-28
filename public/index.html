@@ -84,15 +84,38 @@
     font-family: inherit;
   }
   .preset-btn.active { background: var(--accent); color: var(--dark-text); border-color: var(--accent); }
-  button.primary {
-    width: 100%; margin-top: 18px; padding: 8px 8px 8px 22px; border: none; border-radius: 999px;
-    background: var(--dark); color: var(--dark-text); font-size: 15.5px; font-weight: 700; cursor: pointer;
-    font-family: inherit; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+
+  .swipe-track {
+    position: relative; width: 100%; height: 54px; margin-top: 18px; border-radius: 999px;
+    background: var(--dark); overflow: hidden; user-select: none; isolation: isolate;
   }
-  button.primary:disabled { opacity: .5; }
-  .btn-arrow {
-    width: 34px; height: 34px; min-width: 34px; border-radius: 50%; background: var(--dark-text);
-    color: var(--dark); display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800;
+  .swipe-track:before {
+    content: ""; position: absolute; inset: 0; z-index: 0;
+    background: linear-gradient(100deg, transparent 30%, rgba(251, 246, 238, .16) 50%, transparent 70%);
+    background-size: 220% 100%; animation: swipe-shimmer 2.6s ease-in-out infinite;
+  }
+  .swipe-track.disabled { opacity: .55; }
+  .swipe-track.disabled:before, .swipe-track.dragging:before { animation-play-state: paused; }
+  .swipe-fill {
+    position: absolute; left: 0; top: 0; bottom: 0; z-index: 1; width: 50px;
+    background: var(--accent); border-radius: 999px;
+  }
+  .swipe-track.dragging .swipe-fill, .swipe-track.confirmed .swipe-fill { transition: none; }
+  .swipe-fill.animated { transition: width .28s cubic-bezier(.2, .8, .2, 1); }
+  .swipe-label {
+    position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--dark-text); font-size: 15.5px; font-weight: 700; pointer-events: none;
+  }
+  .swipe-thumb {
+    position: absolute; left: 4px; top: 4px; z-index: 2; width: 46px; height: 46px; border-radius: 50%;
+    background: var(--dark-text); color: var(--dark); display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 800; touch-action: none; cursor: grab; will-change: transform;
+  }
+  .swipe-thumb.animated { transition: transform .28s cubic-bezier(.2, .8, .2, 1); }
+  .swipe-track.dragging .swipe-thumb { cursor: grabbing; }
+  @keyframes swipe-shimmer {
+    0% { background-position: 130% 0; }
+    100% { background-position: -90% 0; }
   }
   .export-row { display: flex; gap: 8px; margin-top: 12px; }
   .export-row button {
@@ -207,7 +230,11 @@
     </div>
     <div id="object-note" class="hint" hidden>Буде показано весь період роботи конструктора на обраних об'єктах.</div>
 
-    <button class="primary" id="btn-report"><span>Сформувати звіт</span><span class="btn-arrow">→</span></button>
+    <div class="swipe-track" id="swipe-track" role="button" tabindex="0" aria-label="Сформувати звіт, свайпніть повзунок праворуч">
+      <div class="swipe-fill" id="swipe-fill"></div>
+      <div class="swipe-label" id="swipe-label">Сформувати звіт</div>
+      <div class="swipe-thumb" id="swipe-thumb">→</div>
+    </div>
     <div id="msg"></div>
   </div>
 
@@ -404,7 +431,7 @@ function currentRequestPayload() {
   return { constructorId, startDate, endDate };
 }
 
-$("#btn-report").addEventListener("click", async () => {
+async function submitReport() {
   const payload = currentRequestPayload();
   if (!payload) {
     showMsg("Оберіть конструктора та період (або об'єкт).", "error");
@@ -413,7 +440,7 @@ $("#btn-report").addEventListener("click", async () => {
   currentConstructorName = $("#constructor").selectedOptions[0]?.textContent || "";
 
   showMsg("Формую звіт...");
-  $("#btn-report").disabled = true;
+  swipe.setDisabled(true);
   try {
     const report = await api("/api/report", { method: "POST", body: JSON.stringify(payload) });
     currentReport = report;
@@ -423,9 +450,79 @@ $("#btn-report").addEventListener("click", async () => {
   } catch (e) {
     showMsg(e.message, "error");
   } finally {
-    $("#btn-report").disabled = false;
+    swipe.setDisabled(false);
+    swipe.reset();
   }
-});
+}
+
+function setupSwipe(trackEl, thumbEl, fillEl, labelEl, onConfirm) {
+  const THUMB_SIZE = 46;
+  const PADDING = 4;
+  const THRESHOLD = 0.72;
+  let dragging = false;
+  let startClientX = 0;
+  let thumbX = 0;
+  let maxX = 0;
+
+  function recalc() {
+    maxX = Math.max(0, trackEl.clientWidth - THUMB_SIZE - PADDING * 2);
+  }
+
+  function place(x, animated) {
+    thumbX = Math.max(0, Math.min(maxX, x));
+    thumbEl.classList.toggle("animated", animated);
+    fillEl.classList.toggle("animated", animated);
+    thumbEl.style.transform = `translateX(${thumbX}px)`;
+    fillEl.style.width = `${PADDING * 2 + THUMB_SIZE + thumbX}px`;
+    const progress = maxX > 0 ? thumbX / maxX : 0;
+    labelEl.style.opacity = String(Math.max(0, 1 - progress * 1.6));
+  }
+
+  function onDown(e) {
+    if (trackEl.classList.contains("disabled")) return;
+    dragging = true;
+    trackEl.classList.add("dragging");
+    recalc();
+    startClientX = e.clientX - thumbX;
+    try { thumbEl.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    place(e.clientX - startClientX, false);
+  }
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    trackEl.classList.remove("dragging");
+    if (maxX > 0 && thumbX >= maxX * THRESHOLD) {
+      place(maxX, true);
+      onConfirm();
+    } else {
+      place(0, true);
+    }
+  }
+
+  thumbEl.addEventListener("pointerdown", onDown);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+  trackEl.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !trackEl.classList.contains("disabled")) {
+      e.preventDefault();
+      place(maxX, true);
+      onConfirm();
+    }
+  });
+  window.addEventListener("resize", () => { recalc(); place(thumbX, false); });
+  recalc();
+
+  return {
+    setDisabled: (v) => trackEl.classList.toggle("disabled", v),
+    reset: () => place(0, true),
+  };
+}
+
+const swipe = setupSwipe($("#swipe-track"), $("#swipe-thumb"), $("#swipe-fill"), $("#swipe-label"), submitReport);
 
 function renderReport(report) {
   $("#summary").hidden = false;
