@@ -152,6 +152,10 @@
   .status-done { color: var(--success); }
   .status-open { color: var(--danger); }
   .status-planned { color: var(--hint); }
+  tr.row-new td { background: #FFF3CD; }
+  .origin-breakdown { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 13px; font-weight: 600; }
+  .origin-breakdown .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: #FFF3CD; margin-right: 6px; vertical-align: middle; }
+  .origin-breakdown div { margin-top: 3px; }
   #msg { margin-top: 12px; font-size: 13px; font-weight: 700; color: var(--hint); min-height: 18px; }
   #msg.error { color: var(--danger); }
   #msg.ok { color: var(--success); }
@@ -271,7 +275,7 @@
     <div class="table-wrap">
       <table id="table" hidden>
         <thead>
-          <tr><th>№</th><th>Об'єкт</th><th>Найменування задачі</th><th>Початок</th><th>Кінець</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
+          <tr><th>№</th><th>Об'єкт</th><th>Найменування задачі</th><th>Тип</th><th>Початок</th><th>Кінець</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
         </thead>
         <tbody id="table-body"></tbody>
       </table>
@@ -567,7 +571,16 @@ $("#btn-report-desktop").addEventListener("click", submitReport);
 
 function renderReport(report) {
   $("#summary").hidden = false;
-  $("#summary").innerHTML = `<div>${escapeHtml(report.periodLabel)}</div><b>${report.totals.plannedHours} год</b> план · <b>${report.totals.factHours} год</b> факт · задач: ${report.totals.count}`;
+  let summaryHtml = `<div>${escapeHtml(report.periodLabel)}</div><b>${report.totals.plannedHours} год</b> план · <b>${report.totals.factHours} год</b> факт · задач: ${report.totals.count}`;
+  const o = report.totals.byOrigin;
+  if (o) {
+    summaryHtml += `<div class="origin-breakdown">
+      <div>Заплановано заздалегідь: ${o.planned.count} задач, ${o.planned.hours} год</div>
+      <div><span class="legend-dot"></span>Додано протягом місяця: ${o.added.count} задач, ${o.added.hours} год</div>
+      <div>Всього: ${o.planned.count + o.added.count} задач, ${o.totalHours} год</div>
+    </div>`;
+  }
+  $("#summary").innerHTML = summaryHtml;
 
   $("#results-card").hidden = report.tasks.length === 0;
   $("#export-row").hidden = report.tasks.length === 0;
@@ -580,10 +593,11 @@ function renderReport(report) {
   $("#table").hidden = false;
   tbody.innerHTML = report.tasks
     .map(
-      (t) => `<tr>
+      (t) => `<tr class="${t.isNew ? "row-new" : ""}">
         <td>${t.order !== null && t.order !== undefined ? Math.round(t.order * 10) / 10 : ""}</td>
         <td>${escapeHtml(t.objectName || "—")}</td>
         <td>${escapeHtml(t.title)}</td>
+        <td>${escapeHtml(t.taskType || "")}</td>
         <td>${formatDateShort(t.start)}</td>
         <td>${formatDateShort(t.end)}</td>
         <td>${t.plannedHours ?? ""}</td>

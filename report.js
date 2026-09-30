@@ -23,12 +23,20 @@ function actualRangeLabel(tasks) {
   return `${formatDateShort(starts[0])}–${formatDateShort(ends[ends.length - 1])}`;
 }
 
+/** Фактичні години, якщо є, інакше планові — для підсумків "скільки реально пішло". */
+function effectiveHours(task) {
+  return task.factHours ?? task.plannedHours ?? 0;
+}
+
 /**
  * Формує дані звіту (задачі + підсумки + підпис періоду) по одному конструктору.
  * options:
- *  - { startDateStr, endDateStr } — звіт за заданий період;
+ *  - { startDateStr, endDateStr } — звіт за заданий період; у цьому режимі
+ *    задачі, створені в Notion вже ПІСЛЯ початку періоду, позначаються як
+ *    "нові" (isNew=true) — додані протягом місяця, а не заплановані заздалегідь;
  *  - { objectIds: [...], objectNames } — звіт за весь час роботи на об'єкті(ах)
- *    (період ігнорується, обчислюється фактично за датами знайдених задач).
+ *    (період ігнорується, обчислюється фактично за датами знайдених задач;
+ *    поняття "нова задача" тут не застосовується).
  */
 async function buildReport(constructorId, options = {}) {
   const isObjectMode = Array.isArray(options.objectIds) && options.objectIds.length > 0;
@@ -38,7 +46,13 @@ async function buildReport(constructorId, options = {}) {
   );
   const now = new Date();
 
-  const tasks = rawTasks.map((t) => ({ ...t, status: computeStatus(t, now) }));
+  const tasks = rawTasks.map((t) => {
+    const isNew =
+      !isObjectMode && options.startDateStr && t.createdTime
+        ? t.createdTime.slice(0, 10) >= options.startDateStr
+        : false;
+    return { ...t, status: computeStatus(t, now), isNew };
+  });
 
   const totals = tasks.reduce(
     (acc, t) => {
@@ -51,6 +65,22 @@ async function buildReport(constructorId, options = {}) {
   );
   totals.plannedHours = round2(totals.plannedHours);
   totals.factHours = round2(totals.factHours);
+
+  if (!isObjectMode && options.startDateStr) {
+    const plannedGroup = tasks.filter((t) => !t.isNew);
+    const addedGroup = tasks.filter((t) => t.isNew);
+    totals.byOrigin = {
+      planned: {
+        count: plannedGroup.length,
+        hours: round2(plannedGroup.reduce((s, t) => s + effectiveHours(t), 0)),
+      },
+      added: {
+        count: addedGroup.length,
+        hours: round2(addedGroup.reduce((s, t) => s + effectiveHours(t), 0)),
+      },
+      totalHours: round2(tasks.reduce((s, t) => s + effectiveHours(t), 0)),
+    };
+  }
 
   let periodLabel;
   if (isObjectMode) {

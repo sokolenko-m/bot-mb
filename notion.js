@@ -22,6 +22,7 @@ const KEYS = {
   factEnd: "Факт. завершення",
   factHours: "Факт. трудозатраты, часы",
   object: "🏗️ Об`єкт",
+  taskType: "Тип задачі",
 };
 
 function assertConfigured() {
@@ -99,6 +100,9 @@ function getPeople(props, key) {
 }
 function getRelationIds(props, key) {
   return (props[key]?.relation || []).map((r) => r.id);
+}
+function getMultiSelect(props, key) {
+  return (props[key]?.multi_select || []).map((o) => o.name).join(", ");
 }
 function isDone(props) {
   const pct = getNumber(props, KEYS.percent, 0);
@@ -195,6 +199,8 @@ async function getTasksForReport(constructorId, { startDateStr, endDateStr, obje
       done: isDone(props),
       factEnd: factEnd ? factEnd.start : null,
       objectIds: getRelationIds(props, KEYS.object),
+      taskType: getMultiSelect(props, KEYS.taskType),
+      createdTime: p.created_time,
     };
   });
 
