@@ -18,16 +18,18 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   const sheet = wb.addWorksheet("Графік завантаженості");
   const hasOrigin = Boolean(totals.byOrigin);
 
+  // 1:№ 2:Об'єкт 3:Найменування задачі 4:Тип задачі 5:Додано 6:Початок 7:Кінець 8:План, год 9:Статус 10:Факт, год
   sheet.columns = [
-    { width: 5 }, // №
-    { width: 20 }, // Об'єкт
-    { width: 38 }, // Найменування задачі
-    { width: 16 }, // Тип задачі
-    { width: 12 }, // Початок
-    { width: 12 }, // Кінець
-    { width: 10 }, // План, год
-    { width: 14 }, // Статус
-    { width: 12 }, // Факт, год
+    { width: 5 },
+    { width: 20 },
+    { width: 38 },
+    { width: 16 },
+    { width: 12 },
+    { width: 12 },
+    { width: 12 },
+    { width: 10 },
+    { width: 14 },
+    { width: 12 },
   ];
 
   // --- лого ---
@@ -38,19 +40,19 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   sheet.getRow(3).height = 22;
 
   // --- заголовок ---
-  sheet.mergeCells("B1:I1");
+  sheet.mergeCells("B1:J1");
   const titleCell = sheet.getCell("B1");
   titleCell.value = "Графік завантаженості конструктора";
   titleCell.font = { bold: true, size: 16, color: { argb: "FF000000" } };
   titleCell.alignment = { vertical: "middle" };
 
-  sheet.mergeCells("B2:I2");
+  sheet.mergeCells("B2:J2");
   const nameCell = sheet.getCell("B2");
   nameCell.value = constructorName;
   nameCell.font = { bold: true, size: 13, color: { argb: BRAND_RED } };
   nameCell.alignment = { vertical: "middle" };
 
-  sheet.mergeCells("B3:I3");
+  sheet.mergeCells("B3:J3");
   const periodCell = sheet.getCell("B3");
   periodCell.value = `Період: ${periodLabel}`;
   periodCell.font = { size: 11, color: { argb: "FF555555" } };
@@ -66,7 +68,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   }
 
   // --- шапка таблиці ---
-  const headerRow = sheet.addRow(["№", "Об'єкт", "Найменування задачі", "Тип задачі", "Початок", "Кінець", "План, год", "Статус", "Факт, год"]);
+  const headerRow = sheet.addRow(["№", "Об'єкт", "Найменування задачі", "Тип задачі", "Додано", "Початок", "Кінець", "План, год", "Статус", "Факт, год"]);
   headerRow.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } };
@@ -76,13 +78,14 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   headerRow.height = 26;
 
   // --- рядки задач ---
-  const CENTER_COLS = new Set([1, 5, 6, 7, 9]);
+  const CENTER_COLS = new Set([1, 5, 6, 7, 8, 10]);
   tasks.forEach((t) => {
     const row = sheet.addRow([
       Math.round((t.order ?? 0) * 10) / 10,
       t.objectName || "—",
       t.title,
       t.taskType || "",
+      formatDate(t.createdTime),
       formatDate(t.start),
       formatDate(t.end),
       t.plannedHours || 0,
@@ -94,12 +97,12 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
       cell.alignment = { vertical: "middle", wrapText: colNumber === 3, horizontal: CENTER_COLS.has(colNumber) ? "center" : "left" };
       if (t.isNew) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NEW_TASK_BG } };
     });
-    if (t.status === "Виконано") row.getCell(8).font = { color: { argb: "FF16A34A" } };
-    else if (t.status === "В роботі") row.getCell(8).font = { color: { argb: BRAND_RED } };
+    if (t.status === "Виконано") row.getCell(9).font = { color: { argb: "FF16A34A" } };
+    else if (t.status === "В роботі") row.getCell(9).font = { color: { argb: BRAND_RED } };
   });
 
   // --- підсумок ---
-  const totalRow = sheet.addRow(["", "", "Разом", "", "", "", totals.plannedHours, `Задач: ${totals.count}`, totals.factHours]);
+  const totalRow = sheet.addRow(["", "", "Разом", "", "", "", "", totals.plannedHours, `Задач: ${totals.count}`, totals.factHours]);
   totalRow.eachCell((cell) => {
     cell.font = { bold: true };
     cell.border = thinBorder();
@@ -114,10 +117,10 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
       ["Всього:", `${o.planned.count + o.added.count} задач`, `${o.totalHours} год`],
     ];
     for (const [label, count, hours] of rows) {
-      const r = sheet.addRow(["", "", label, "", "", "", count, "", hours]);
+      const r = sheet.addRow(["", "", label, "", "", "", "", count, "", hours]);
       r.getCell(3).font = { bold: true };
-      r.getCell(7).font = { bold: true };
-      r.getCell(9).font = { bold: true };
+      r.getCell(8).font = { bold: true };
+      r.getCell(10).font = { bold: true };
     }
   }
 

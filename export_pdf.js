@@ -17,13 +17,14 @@ const PAGE_OPTS = { margin: MARGIN, size: "A4", layout: "landscape" };
 const COLUMNS = [
   { key: "n", title: "№", width: 32, align: "center" },
   { key: "object", title: "Об'єкт", width: 90, align: "left" },
-  { key: "title", title: "Найменування задачі", width: 208, align: "left" },
-  { key: "type", title: "Тип задачі", width: 80, align: "left" },
-  { key: "start", title: "Початок", width: 62, align: "center" },
-  { key: "end", title: "Кінець", width: 58, align: "center" },
-  { key: "planned", title: "План, год", width: 52, align: "center" },
-  { key: "status", title: "Статус", width: 70, align: "center" },
-  { key: "fact", title: "Факт, год", width: 52, align: "center" },
+  { key: "title", title: "Найменування задачі", width: 190, align: "left" },
+  { key: "type", title: "Тип задачі", width: 72, align: "left" },
+  { key: "added", title: "Додано", width: 56, align: "center" },
+  { key: "start", title: "Початок", width: 56, align: "center" },
+  { key: "end", title: "Кінець", width: 52, align: "center" },
+  { key: "planned", title: "План, год", width: 48, align: "center" },
+  { key: "status", title: "Статус", width: 66, align: "center" },
+  { key: "fact", title: "Факт, год", width: 48, align: "center" },
 ];
 
 function formatOrder(order) {
@@ -65,6 +66,7 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
         object: t.objectName || "—",
         title: t.title,
         type: t.taskType || "",
+        added: formatDateShort(t.createdTime),
         start: formatDateShort(t.start),
         end: formatDateShort(t.end),
         planned: String(t.plannedHours ?? ""),
@@ -87,6 +89,7 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
       object: "",
       title: "Разом",
       type: "",
+      added: "",
       start: "",
       end: "",
       planned: String(totals.plannedHours),

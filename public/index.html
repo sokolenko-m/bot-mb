@@ -275,7 +275,7 @@
     <div class="table-wrap">
       <table id="table" hidden>
         <thead>
-          <tr><th>№</th><th>Об'єкт</th><th>Найменування задачі</th><th>Тип</th><th>Початок</th><th>Кінець</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
+          <tr><th>№</th><th>Об'єкт</th><th>Найменування задачі</th><th>Тип</th><th>Додано</th><th>Початок</th><th>Кінець</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr>
         </thead>
         <tbody id="table-body"></tbody>
       </table>
@@ -598,6 +598,7 @@ function renderReport(report) {
         <td>${escapeHtml(t.objectName || "—")}</td>
         <td>${escapeHtml(t.title)}</td>
         <td>${escapeHtml(t.taskType || "")}</td>
+        <td>${formatDateShort(t.createdTime)}</td>
         <td>${formatDateShort(t.start)}</td>
         <td>${formatDateShort(t.end)}</td>
         <td>${t.plannedHours ?? ""}</td>
