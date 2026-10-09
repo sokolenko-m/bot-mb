@@ -1,7 +1,24 @@
 "use strict";
-const { getTasksForReport } = require("./notion");
+const {
+  getTasksForReport,
+  findOriginalCreatedTimes,
+  getSchedulerLastCycle,
+  baseTitle,
+  isContinuation,
+} = require("./notion");
+const { kyivDateStr, formatDate } = require("./dates");
 
-/** Обчислює статус життєвого циклу задачі станом на зараз. */
+// Те саме правило, що й у боті конструкторів (notion_scheduler/bot_daily.js).
+const ABSENCE_RE = /^\s*(відпустка|відсутність|отпуск)/i;
+const ABSENCE_STATUS = "Відсутність";
+
+// Планувальник пише "живий" раз на 30 хв і сам попереджає адміна після 2 год
+// без успішного циклу — тут той самий поріг.
+const SCHEDULER_STALE_MINUTES = 120;
+
+const KNOWN_STATES = new Set(["Виконано", "На паузі", "Заплановано", "В роботі"]);
+
+/** Статус, якщо формули "Стан задачі" немає (запасний варіант). */
 function computeStatus(task, now = new Date()) {
   if (task.done) return "Виконано";
   const start = task.start ? new Date(task.start) : null;
@@ -9,18 +26,12 @@ function computeStatus(task, now = new Date()) {
   return "В роботі";
 }
 
-function formatDateShort(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
-
 /** Період за фактичними датами задач: від найранішого початку до найпізнішого кінця. */
 function actualRangeLabel(tasks) {
   const starts = tasks.map((t) => t.start).filter(Boolean).sort();
   const ends = tasks.map((t) => t.end || t.start).filter(Boolean).sort();
   if (!starts.length) return "немає задач";
-  return `${formatDateShort(starts[0])}–${formatDateShort(ends[ends.length - 1])}`;
+  return `${formatDate(starts[0])}–${formatDate(ends[ends.length - 1])}`;
 }
 
 /** Фактичні години, якщо є, інакше планові — для підсумків "скільки реально пішло". */
@@ -28,47 +39,79 @@ function effectiveHours(task) {
   return task.factHours ?? task.plannedHours ?? 0;
 }
 
+/** {lastCycle, minutesAgo, stale} або null, якщо планувальник ще не передавав статус. */
+async function schedulerFreshness(now = new Date()) {
+  const lastCycle = await getSchedulerLastCycle();
+  if (!lastCycle) return null;
+  const minutesAgo = Math.max(0, Math.round((now.getTime() - new Date(lastCycle).getTime()) / 60000));
+  return { lastCycle, minutesAgo, stale: minutesAgo > SCHEDULER_STALE_MINUTES };
+}
+
 /**
  * Формує дані звіту (задачі + підсумки + підпис періоду) по одному конструктору.
  * options:
  *  - { startDateStr, endDateStr } — звіт за заданий період; у цьому режимі
- *    задачі, створені в Notion вже ПІСЛЯ початку періоду, позначаються як
- *    "нові" (isNew=true) — додані протягом місяця, а не заплановані заздалегідь;
+ *    задачі, створені в Notion вже ПІСЛЯ початку періоду (за київською датою),
+ *    позначаються як "нові" (isNew=true) — додані протягом місяця, а не
+ *    заплановані заздалегідь. Продовження розрізаної задачі "(продолжение)"
+ *    успадковує дату створення вихідної задачі;
  *  - { objectIds: [...], objectNames } — звіт за весь час роботи на об'єкті(ах)
  *    (період ігнорується, обчислюється фактично за датами знайдених задач;
  *    поняття "нова задача" тут не застосовується).
+ * Відпустка/відсутність показується сірим і не входить у підсумки годин —
+ * для неї окремий рядок totals.absence.
  */
 async function buildReport(constructorId, options = {}) {
   const isObjectMode = Array.isArray(options.objectIds) && options.objectIds.length > 0;
-  const rawTasks = await getTasksForReport(
-    constructorId,
-    isObjectMode ? { objectIds: options.objectIds } : options
-  );
+  const [rawTasks, scheduler] = await Promise.all([
+    getTasksForReport(constructorId, isObjectMode ? { objectIds: options.objectIds } : options),
+    schedulerFreshness(),
+  ]);
   const now = new Date();
+  const trackNew = !isObjectMode && Boolean(options.startDateStr);
+
+  let originalCreated = new Map();
+  if (trackNew) {
+    const bases = rawTasks.filter((t) => isContinuation(t.title)).map((t) => baseTitle(t.title));
+    if (bases.length) originalCreated = await findOriginalCreatedTimes(constructorId, bases);
+  }
 
   const tasks = rawTasks.map((t) => {
+    const isAbsence = ABSENCE_RE.test(t.title || "");
+    let status;
+    if (isAbsence) status = ABSENCE_STATUS;
+    else status = KNOWN_STATES.has(t.state) ? t.state : computeStatus(t, now);
+
+    let originCreatedTime = t.createdTime;
+    if (trackNew && isContinuation(t.title)) {
+      const orig = originalCreated.get(baseTitle(t.title));
+      if (orig && orig < originCreatedTime) originCreatedTime = orig;
+    }
     const isNew =
-      !isObjectMode && options.startDateStr && t.createdTime
-        ? t.createdTime.slice(0, 10) >= options.startDateStr
-        : false;
-    return { ...t, status: computeStatus(t, now), isNew };
+      trackNew && !isAbsence && originCreatedTime ? kyivDateStr(originCreatedTime) >= options.startDateStr : false;
+
+    return { ...t, status, isAbsence, isNew, originCreatedTime };
   });
 
-  const totals = tasks.reduce(
-    (acc, t) => {
-      acc.plannedHours += t.plannedHours || 0;
-      acc.factHours += t.factHours || 0;
-      acc.count += 1;
-      return acc;
-    },
-    { plannedHours: 0, factHours: 0, count: 0 }
-  );
-  totals.plannedHours = round2(totals.plannedHours);
-  totals.factHours = round2(totals.factHours);
+  const work = tasks.filter((t) => !t.isAbsence);
+  const absence = tasks.filter((t) => t.isAbsence);
 
-  if (!isObjectMode && options.startDateStr) {
-    const plannedGroup = tasks.filter((t) => !t.isNew);
-    const addedGroup = tasks.filter((t) => t.isNew);
+  const totals = {
+    plannedHours: round2(work.reduce((s, t) => s + (t.plannedHours || 0), 0)),
+    factHours: round2(work.reduce((s, t) => s + (t.factHours || 0), 0)),
+    count: work.length,
+  };
+
+  if (absence.length) {
+    totals.absence = {
+      count: absence.length,
+      hours: round2(absence.reduce((s, t) => s + (t.plannedHours || 0), 0)),
+    };
+  }
+
+  if (trackNew) {
+    const plannedGroup = work.filter((t) => !t.isNew);
+    const addedGroup = work.filter((t) => t.isNew);
     totals.byOrigin = {
       planned: {
         count: plannedGroup.length,
@@ -78,7 +121,7 @@ async function buildReport(constructorId, options = {}) {
         count: addedGroup.length,
         hours: round2(addedGroup.reduce((s, t) => s + effectiveHours(t), 0)),
       },
-      totalHours: round2(tasks.reduce((s, t) => s + effectiveHours(t), 0)),
+      totalHours: round2(work.reduce((s, t) => s + effectiveHours(t), 0)),
     };
   }
 
@@ -87,14 +130,22 @@ async function buildReport(constructorId, options = {}) {
     const objectPart = options.objectNames ? `Об'єкт: ${options.objectNames} — ` : "";
     periodLabel = objectPart + actualRangeLabel(tasks);
   } else {
-    periodLabel = `${formatDateShort(options.startDateStr)}–${formatDateShort(options.endDateStr)}`;
+    // endDateStr — виключна межа (перший день після періоду), показуємо останній день періоду
+    periodLabel = `${formatDate(options.startDateStr)}–${formatDate(dayBefore(options.endDateStr))}`;
   }
 
-  return { tasks, totals, periodLabel };
+  return { tasks, totals, periodLabel, scheduler };
+}
+
+function dayBefore(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
 }
 
 function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-module.exports = { buildReport };
+module.exports = { buildReport, ABSENCE_STATUS };

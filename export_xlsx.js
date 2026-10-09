@@ -1,22 +1,21 @@
 "use strict";
 const path = require("path");
 const ExcelJS = require("exceljs");
+const { formatDate } = require("./dates");
 
 const LOGO_PATH = path.join(__dirname, "assets", "logo.png");
 const BRAND_RED = "FFC00000";
 const HEADER_BG = "FF1A1A1A";
 const NEW_TASK_BG = "FFFFF3CD";
-
-function formatDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
+const ABSENCE_BG = "FFEDEDED";
+const ABSENCE_TEXT = "FF8B8886";
+const PAUSED_TEXT = "FFB45309";
 
 async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   const wb = new ExcelJS.Workbook();
   const sheet = wb.addWorksheet("Графік завантаженості");
   const hasOrigin = Boolean(totals.byOrigin);
+  const hasAbsence = Boolean(totals.absence);
 
   // 1:№ 2:Об'єкт 3:Найменування задачі 4:Тип задачі 5:Додано 6:Початок 7:Кінець 8:План, год 9:Статус 10:Факт, год
   sheet.columns = [
@@ -64,8 +63,13 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
     const legendRow = sheet.addRow(["", "", "Жовтим — задачі, додані протягом місяця (не було в плані на початок періоду)"]);
     legendRow.getCell(3).font = { italic: true, size: 10, color: { argb: "FF806600" } };
     legendRow.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: NEW_TASK_BG } };
-    sheet.addRow([]);
   }
+  if (hasAbsence) {
+    const legendRow = sheet.addRow(["", "", "Сірим — відпустка / відсутність (не входить у підсумки годин)"]);
+    legendRow.getCell(3).font = { italic: true, size: 10, color: { argb: ABSENCE_TEXT } };
+    legendRow.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: ABSENCE_BG } };
+  }
+  if (hasOrigin || hasAbsence) sheet.addRow([]);
 
   // --- шапка таблиці ---
   const headerRow = sheet.addRow(["№", "Об'єкт", "Найменування задачі", "Тип задачі", "Додано", "Початок", "Кінець", "План, год", "Статус", "Факт, год"]);
@@ -85,7 +89,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
       t.objectName || "—",
       t.title,
       t.taskType || "",
-      formatDate(t.createdTime),
+      formatDate(t.originCreatedTime || t.createdTime),
       formatDate(t.start),
       formatDate(t.end),
       t.plannedHours || 0,
@@ -95,18 +99,31 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
     row.eachCell((cell, colNumber) => {
       cell.border = thinBorder();
       cell.alignment = { vertical: "middle", wrapText: colNumber === 3, horizontal: CENTER_COLS.has(colNumber) ? "center" : "left" };
-      if (t.isNew) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NEW_TASK_BG } };
+      if (t.isAbsence) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ABSENCE_BG } };
+        cell.font = { color: { argb: ABSENCE_TEXT } };
+      } else if (t.isNew) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NEW_TASK_BG } };
+      }
     });
     if (t.status === "Виконано") row.getCell(9).font = { color: { argb: "FF16A34A" } };
     else if (t.status === "В роботі") row.getCell(9).font = { color: { argb: BRAND_RED } };
+    else if (t.status === "На паузі") row.getCell(9).font = { color: { argb: PAUSED_TEXT } };
   });
 
-  // --- підсумок ---
+  // --- підсумок (без відпусток) ---
   const totalRow = sheet.addRow(["", "", "Разом", "", "", "", "", totals.plannedHours, `Задач: ${totals.count}`, totals.factHours]);
   totalRow.eachCell((cell) => {
     cell.font = { bold: true };
     cell.border = thinBorder();
   });
+  if (hasAbsence) {
+    const r = sheet.addRow(["", "", "Відсутність (відпустка тощо)", "", "", "", "", totals.absence.hours, `Записів: ${totals.absence.count}`, ""]);
+    r.eachCell((cell) => {
+      cell.font = { color: { argb: ABSENCE_TEXT } };
+      cell.border = thinBorder();
+    });
+  }
 
   if (hasOrigin) {
     sheet.addRow([]);

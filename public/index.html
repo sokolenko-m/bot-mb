@@ -152,7 +152,13 @@
   .status-done { color: var(--success); }
   .status-open { color: var(--danger); }
   .status-planned { color: var(--hint); }
+  .status-paused { color: #B45309; }
   tr.row-new td { background: #FFF3CD; }
+  tr.row-absence td { background: #EDEDED; color: var(--hint); }
+  .absence-line { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--hint); }
+  .absence-line .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: #EDEDED; border: 1px solid #D5D5D5; margin-right: 6px; vertical-align: middle; }
+  .scheduler-line { margin-top: 10px; font-size: 12px; font-weight: 700; color: var(--hint); }
+  .scheduler-line.stale { color: var(--danger); }
   .origin-breakdown { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 13px; font-weight: 600; }
   .origin-breakdown .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: #FFF3CD; margin-right: 6px; vertical-align: middle; }
   .origin-breakdown div { margin-top: 3px; }
@@ -434,13 +440,26 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Дати показуємо за київським часом незалежно від налаштувань телефону.
 function formatDateShort(iso) {
   if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) { const [, m, d] = iso.split("-"); return `${d}.${m}`; }
+  return new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", timeZone: "Europe/Kyiv" });
 }
 
-const STATUS_CLASS = { "Виконано": "status-done", "В роботі": "status-open", "Заплановано": "status-planned" };
+function schedulerLine(s) {
+  if (!s) return `<div class="scheduler-line">Планувальник: немає даних про останній цикл</div>`;
+  const m = s.minutesAgo;
+  let ago;
+  if (m < 1) ago = "щойно";
+  else if (m < 60) ago = `${m} хв тому`;
+  else if (m < 48 * 60) ago = `${Math.floor(m / 60)} год ${m % 60} хв тому`;
+  else ago = new Date(s.lastCycle).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Kyiv" });
+  const warn = s.stale ? " — дати в звіті можуть бути неактуальні" : "";
+  return `<div class="scheduler-line${s.stale ? " stale" : ""}">Планувальник: останній цикл ${ago}${warn}</div>`;
+}
+
+const STATUS_CLASS = { "Виконано": "status-done", "В роботі": "status-open", "Заплановано": "status-planned", "На паузі": "status-paused", "Відсутність": "status-planned" };
 
 function currentRequestPayload() {
   const constructorId = $("#constructor").value;
@@ -580,6 +599,11 @@ function renderReport(report) {
       <div>Всього: ${o.planned.count + o.added.count} задач, ${o.totalHours} год</div>
     </div>`;
   }
+  const a = report.totals.absence;
+  if (a) {
+    summaryHtml += `<div class="absence-line"><span class="legend-dot"></span>Відсутність (відпустка тощо): ${a.hours} год — не входить у підсумки</div>`;
+  }
+  summaryHtml += schedulerLine(report.scheduler);
   $("#summary").innerHTML = summaryHtml;
 
   $("#results-card").hidden = report.tasks.length === 0;
@@ -593,12 +617,12 @@ function renderReport(report) {
   $("#table").hidden = false;
   tbody.innerHTML = report.tasks
     .map(
-      (t) => `<tr class="${t.isNew ? "row-new" : ""}">
+      (t) => `<tr class="${t.isAbsence ? "row-absence" : t.isNew ? "row-new" : ""}">
         <td>${t.order !== null && t.order !== undefined ? Math.round(t.order * 10) / 10 : ""}</td>
         <td>${escapeHtml(t.objectName || "—")}</td>
         <td>${escapeHtml(t.title)}</td>
         <td>${escapeHtml(t.taskType || "")}</td>
-        <td>${formatDateShort(t.createdTime)}</td>
+        <td>${formatDateShort(t.originCreatedTime || t.createdTime)}</td>
         <td>${formatDateShort(t.start)}</td>
         <td>${formatDateShort(t.end)}</td>
         <td>${t.plannedHours ?? ""}</td>

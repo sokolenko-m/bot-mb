@@ -3,11 +3,16 @@
  * Validates Telegram Mini App `initData` per the official algorithm:
  * https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
  *
- * Also enforces an allowlist of Telegram user ids (ALLOWED_USER_IDS env var,
- * comma-separated) — only "я + руководители отделов" should see reports.
+ * Доступ мають лише:
+ *  - Telegram ID зі змінної оточення ALLOWED_USER_IDS (через кому) — запасний
+ *    "ключ" адміністратора, працює навіть якщо Notion недоступний;
+ *  - люди з "Участники_1" в Notion, у яких заповнено "Telegram ID" і стоїть
+ *    галочка "Доступ до звітів" (список кешується на 5 хв).
+ * Якщо список із Notion отримати не вдалося — доступ закритий (крім ALLOWED_USER_IDS).
  */
 
 const crypto = require("crypto");
+const { listReportAccessTelegramIds } = require("./notion");
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_USER_IDS = new Set(
@@ -17,6 +22,10 @@ const ALLOWED_USER_IDS = new Set(
     .filter(Boolean)
 );
 const MAX_AGE_SECONDS = 24 * 3600;
+const ACCESS_CACHE_TTL_MS = 5 * 60 * 1000;
+// Якщо Notion тимчасово не відповідає — ще годину користуємось останнім
+// успішно отриманим списком, далі доступ закривається.
+const ACCESS_CACHE_MAX_STALE_MS = 60 * 60 * 1000;
 
 class AuthError extends Error {
   constructor(message, status = 403) {
@@ -56,22 +65,54 @@ function validateInitData(initData) {
 
   const userRaw = params.get("user");
   if (!userRaw) throw new AuthError("У initData немає даних користувача.");
-  const user = JSON.parse(userRaw);
+  return JSON.parse(userRaw);
+}
 
-  // Якщо ALLOWED_USER_IDS не задано (порожньо) — доступ відкритий для всіх,
-  // хто відкриє бота. Підпис initData все одно перевіряється вище, тобто
-  // підробити запит без справжнього Telegram неможливо в будь-якому разі.
-  if (ALLOWED_USER_IDS.size > 0 && !ALLOWED_USER_IDS.has(String(user.id))) {
-    throw new AuthError(`Доступ заборонено для користувача ${user.id}.`);
+let accessCache = { ids: null, fetchedAt: 0 };
+let accessFetch = null;
+
+/** Set Telegram ID з галочкою "Доступ до звітів" або null, якщо Notion недоступний. */
+async function notionAllowedIds() {
+  const age = Date.now() - accessCache.fetchedAt;
+  if (accessCache.ids && age < ACCESS_CACHE_TTL_MS) return accessCache.ids;
+  if (!accessFetch) {
+    accessFetch = listReportAccessTelegramIds()
+      .then((ids) => {
+        accessCache = { ids, fetchedAt: Date.now() };
+      })
+      .catch((e) => {
+        console.error("Не вдалося отримати список доступу з Notion:", e.message);
+      })
+      .finally(() => {
+        accessFetch = null;
+      });
   }
+  await accessFetch;
+  const freshAge = Date.now() - accessCache.fetchedAt;
+  return accessCache.ids && freshAge < ACCESS_CACHE_MAX_STALE_MS ? accessCache.ids : null;
+}
 
-  return user;
+async function assertAllowed(user) {
+  const id = String(user.id);
+  if (ALLOWED_USER_IDS.has(id)) return;
+  const ids = await notionAllowedIds();
+  if (!ids) {
+    throw new AuthError("Не вдалося перевірити доступ (Notion недоступний). Спробуйте за кілька хвилин.", 503);
+  }
+  if (!ids.has(id)) {
+    throw new AuthError(
+      `Доступ до звітів закритий. Ваш Telegram ID: ${id}. ` +
+        "Попросіть адміністратора вписати його в Notion («Участники_1» → «Telegram ID») і поставити галочку «Доступ до звітів»."
+    );
+  }
 }
 
 /** Express middleware: reads initData from the X-Telegram-Init-Data header. */
-function requireTelegramAuth(req, res, next) {
+async function requireTelegramAuth(req, res, next) {
   try {
-    req.telegramUser = validateInitData(req.header("X-Telegram-Init-Data"));
+    const user = validateInitData(req.header("X-Telegram-Init-Data"));
+    await assertAllowed(user);
+    req.telegramUser = user;
     next();
   } catch (e) {
     res.status(e.status || 403).json({ error: e.message });

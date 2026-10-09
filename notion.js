@@ -9,6 +9,10 @@ const NOTION_VERSION = "2025-09-03";
 
 const TOKEN = process.env.NOTION_TOKEN;
 const DATA_SOURCE_ID = process.env.NOTION_DATA_SOURCE_ID;
+// "Участники_1" — звідси береться список тих, кому відкрито звіти.
+const PARTICIPANTS_DS_ID = process.env.NOTION_PARTICIPANTS_DS_ID || "37d7a095-971a-8076-8dfd-000bf72aec67";
+// Сторінка, в заголовок якої планувальник раз на 30 хв пише час останнього циклу.
+const HEARTBEAT_PAGE_ID = process.env.NOTION_HEARTBEAT_PAGE_ID || "3f47a095-971a-8176-bc9f-e6bc48bdc767";
 
 const KEYS = {
   title: "название",
@@ -23,6 +27,35 @@ const KEYS = {
   factHours: "Факт. трудозатраты, часы",
   object: "🏗️ Об`єкт",
   taskType: "Тип задачі",
+  state: "Стан задачі",
+};
+
+const PARTICIPANT_KEYS = {
+  telegramId: "Telegram ID",
+  reportAccess: "Доступ до звітів",
+};
+
+/**
+ * Поля, без яких звіт буде хибним (нулі, порожні дати). Якщо хтось у Notion
+ * перейменує поле або змінить його тип — звіт не формується, а показується
+ * зрозуміла помилка. Для "Порядку" допускаються і url/текст (див. getOrderNumber).
+ */
+const REQUIRED_TYPES = {
+  [KEYS.title]: ["title"],
+  [KEYS.constructor]: ["people"],
+  [KEYS.order]: ["number", "url", "rich_text"],
+  [KEYS.plannedHours]: ["number"],
+  [KEYS.start]: ["date"],
+  [KEYS.end]: ["date"],
+  [KEYS.percent]: ["number"],
+  [KEYS.factEnd]: ["date"],
+  [KEYS.factHours]: ["number"],
+  [KEYS.object]: ["relation"],
+};
+// Поля, без яких звіт лише бідніший (колонка порожня / статус рахується в коді).
+const OPTIONAL_TYPES = {
+  [KEYS.taskType]: ["multi_select"],
+  [KEYS.state]: ["formula"],
 };
 
 function assertConfigured() {
@@ -47,11 +80,11 @@ async function notionRequest(method, url, body) {
   return resp.json();
 }
 
-async function queryAll(filter, sorts) {
+async function queryAll(filter, sorts, dataSourceId = DATA_SOURCE_ID) {
   assertConfigured();
   const results = [];
   let startCursor;
-  const url = `${API_BASE}/data_sources/${DATA_SOURCE_ID}/query`;
+  const url = `${API_BASE}/data_sources/${dataSourceId}/query`;
   while (true) {
     const body = { page_size: 100 };
     if (filter) body.filter = filter;
@@ -101,6 +134,17 @@ function getPeople(props, key) {
 function getRelationIds(props, key) {
   return (props[key]?.relation || []).map((r) => r.id);
 }
+function getPlainText(props, key) {
+  const v = props[key];
+  const parts = v?.rich_text || v?.title || [];
+  return parts.map((x) => x.plain_text).join("").trim();
+}
+/** Значення формули "Стан задачі" без емодзі на початку: "Виконано", "На паузі", ... */
+function getStateText(props) {
+  const f = props[KEYS.state]?.formula;
+  if (!f || f.type !== "string" || !f.string) return null;
+  return f.string.replace(/^[^\p{L}]+/u, "").trim() || null;
+}
 function getMultiSelect(props, key) {
   return (props[key]?.multi_select || []).map((o) => o.name).join(", ");
 }
@@ -110,8 +154,121 @@ function isDone(props) {
   return (pct || 0) >= 100 || !!(factEnd && factEnd.start);
 }
 
+class SchemaError extends Error {}
+
+const SCHEMA_CHECK_TTL_MS = 5 * 60 * 1000;
+let schemaCheckedAt = 0;
+let presentOptional = new Set(Object.keys(OPTIONAL_TYPES));
+
+/**
+ * Перевіряє, що в базі "Задачи" є потрібні поля потрібних типів (результат
+ * кешується на 5 хв). Кидає SchemaError з переліком проблем.
+ */
+async function assertSchema() {
+  assertConfigured();
+  if (Date.now() - schemaCheckedAt < SCHEMA_CHECK_TTL_MS) return;
+  const ds = await notionRequest("GET", `${API_BASE}/data_sources/${DATA_SOURCE_ID}`);
+  const props = ds.properties || {};
+  const problems = [];
+  for (const [name, types] of Object.entries(REQUIRED_TYPES)) {
+    const p = props[name];
+    if (!p) problems.push(`немає поля «${name}»`);
+    else if (!types.includes(p.type)) problems.push(`поле «${name}» має тип ${p.type}, а очікується ${types[0]}`);
+  }
+  if (problems.length) {
+    throw new SchemaError(
+      "Структура бази «Задачи» в Notion змінилась: " +
+        problems.join("; ") +
+        ". Звіт не сформовано, щоб не показати хибні нулі — поверніть поле як було або зверніться до адміністратора."
+    );
+  }
+  presentOptional = new Set(
+    Object.entries(OPTIONAL_TYPES)
+      .filter(([name, types]) => props[name] && types.includes(props[name].type))
+      .map(([name]) => name)
+  );
+  schemaCheckedAt = Date.now();
+}
+
+/**
+ * Telegram ID людей, яким в "Участники_1" поставлено галочку "Доступ до звітів".
+ * Повертає Set рядків.
+ */
+async function listReportAccessTelegramIds() {
+  const filter = { property: PARTICIPANT_KEYS.reportAccess, checkbox: { equals: true } };
+  const pages = await queryAll(filter, undefined, PARTICIPANTS_DS_ID);
+  const ids = new Set();
+  for (const p of pages) {
+    // в одному полі може бути кілька ID через кому/пробіл
+    for (const id of getPlainText(p.properties, PARTICIPANT_KEYS.telegramId).split(/[\s,;]+/)) {
+      if (/^\d+$/.test(id)) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Час останнього успішного циклу планувальника (ISO) із заголовка сторінки
+ * "⚙️ Статус планувальника — останній цикл ДД.ММ.РРРР ЧЧ:ХХ [ISO]".
+ * null — якщо сторінка недоступна або планувальник ще не писав туди час.
+ */
+async function getSchedulerLastCycle() {
+  if (!HEARTBEAT_PAGE_ID) return null;
+  try {
+    const page = await notionRequest("GET", `${API_BASE}/pages/${HEARTBEAT_PAGE_ID}`);
+    const titleProp = Object.values(page.properties || {}).find((p) => p.type === "title");
+    const title = (titleProp?.title || []).map((x) => x.plain_text).join("");
+    const m = title.match(/\[([^\]]+)\]/);
+    if (!m) return null;
+    const d = new Date(m[1]);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+const CONTINUATION_RE = /\s*\((продолжение|продовження)\)\s*$/i;
+/** Назва без суфіксів "(продолжение)"/"(продовження)" (їх може бути кілька). */
+function baseTitle(title) {
+  let t = title || "";
+  while (CONTINUATION_RE.test(t)) t = t.replace(CONTINUATION_RE, "");
+  return t.trim();
+}
+function isContinuation(title) {
+  return CONTINUATION_RE.test(title || "");
+}
+
+/**
+ * Для задач-продовжень (планувальник розрізає задачу, коли її перебиває
+ * термінова) шукає найранішу дату створення серед задач того ж конструктора
+ * з тією ж базовою назвою — тобто дату створення вихідної задачі.
+ * Повертає Map(базова назва → createdTime ISO).
+ */
+async function findOriginalCreatedTimes(constructorId, baseTitles) {
+  const result = new Map();
+  await Promise.all(
+    [...new Set(baseTitles)].filter(Boolean).map(async (base) => {
+      const filter = {
+        and: [
+          { property: KEYS.constructor, people: { contains: constructorId } },
+          { property: KEYS.title, title: { starts_with: base } },
+        ],
+      };
+      const pages = await queryAll(filter);
+      let earliest = null;
+      for (const p of pages) {
+        if (baseTitle(getTitle(p.properties)) !== base) continue;
+        if (!earliest || p.created_time < earliest) earliest = p.created_time;
+      }
+      if (earliest) result.set(base, earliest);
+    })
+  );
+  return result;
+}
+
 /** Список конструкторов, встречающихся в базе — {id, name}. */
 async function listConstructors() {
+  await assertSchema();
   const all = await queryAll();
   const map = new Map();
   for (const page of all) {
@@ -171,6 +328,7 @@ async function listObjectsForConstructor(constructorId) {
  * час роботи на цих об'єктах). Сортування за датою початку.
  */
 async function getTasksForReport(constructorId, { startDateStr, endDateStr, objectIds } = {}) {
+  await assertSchema();
   const and = [{ property: KEYS.constructor, people: { contains: constructorId } }];
   if (startDateStr) and.push({ property: KEYS.start, date: { on_or_after: startDateStr } });
   if (endDateStr) and.push({ property: KEYS.start, date: { before: endDateStr } });
@@ -200,6 +358,7 @@ async function getTasksForReport(constructorId, { startDateStr, endDateStr, obje
       factEnd: factEnd ? factEnd.start : null,
       objectIds: getRelationIds(props, KEYS.object),
       taskType: getMultiSelect(props, KEYS.taskType),
+      state: presentOptional.has(KEYS.state) ? getStateText(props) : null,
       createdTime: p.created_time,
     };
   });
@@ -208,4 +367,15 @@ async function getTasksForReport(constructorId, { startDateStr, endDateStr, obje
   return tasks;
 }
 
-module.exports = { listConstructors, listObjectsForConstructor, getTasksForReport, KEYS };
+module.exports = {
+  listConstructors,
+  listObjectsForConstructor,
+  getTasksForReport,
+  listReportAccessTelegramIds,
+  getSchedulerLastCycle,
+  findOriginalCreatedTimes,
+  baseTitle,
+  isContinuation,
+  SchemaError,
+  KEYS,
+};
