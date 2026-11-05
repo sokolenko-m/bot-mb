@@ -619,7 +619,7 @@ function renderReport(report) {
     .map(
       (t) => `<tr class="${t.isAbsence ? "row-absence" : t.isNew ? "row-new" : ""}">
         <td>${escapeHtml(t.taskNumber || "")}</td>
-        <td>${t.order !== null && t.order !== undefined ? Math.round(t.order * 10) / 10 : ""}</td>
+        <td>${t.order !== null && t.order !== undefined ? Math.round(t.order * 100) / 100 : ""}</td>
         <td>${escapeHtml(t.objectName || "—")}</td>
         <td>${escapeHtml(t.title)}</td>
         <td>${escapeHtml(t.taskType || "")}</td>

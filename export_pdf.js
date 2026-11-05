@@ -34,7 +34,7 @@ const COLUMNS = [
 
 function formatOrder(order) {
   if (order === null || order === undefined) return "";
-  return String(Math.round(order * 10) / 10);
+  return String(Math.round(order * 100) / 100);
 }
 
 const TABLE_WIDTH = COLUMNS.reduce((s, c) => s + c.width, 0);
@@ -235,4 +235,4 @@ function drawRow(doc, row, y, height, status, { isTotal = false, isNew = false, 
   }
 }
 
-module.exports = { buildPdf, COLUMNS, PAGE_OPTS, MARGIN, FONT_REGULAR, FONT_BOLD };
+module.exports = { buildPdf, formatOrder, COLUMNS, PAGE_OPTS, MARGIN, FONT_REGULAR, FONT_BOLD };

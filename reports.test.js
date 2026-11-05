@@ -14,7 +14,7 @@ process.env.NOTION_DATA_SOURCE_ID = "ds-test";
 
 const notion = require("./notion");
 const { buildXlsx } = require("./export_xlsx");
-const { buildPdf, COLUMNS, PAGE_OPTS, MARGIN, FONT_BOLD, FONT_REGULAR } = require("./export_pdf");
+const { buildPdf, formatOrder, COLUMNS, PAGE_OPTS, MARGIN, FONT_BOLD, FONT_REGULAR } = require("./export_pdf");
 
 const SCHEMA_PROPS = {
   название: { type: "title" },
@@ -203,10 +203,27 @@ test("Excel: колір статусу, перенос назви і залив�
   const done = findRow(rows, "Плановa задача");
   assert.equal(done.getCell(10).font.color.argb, "FF16A34A");
   assert.equal(done.getCell(4).alignment.wrapText, true);
-  assert.ok(!done.getCell(3).alignment.wrapText);
   const added = findRow(rows, "Задача без номера");
   assert.equal(added.getCell(10).font.color.argb, "FFC00000");
   assert.equal(added.getCell(4).fill.fgColor.argb, "FFFFF3CD");
+});
+
+test("Excel: довгі «Об'єкт» і «Тип задачі» переносяться, а не обрізаються", async () => {
+  const { rows } = await loadSheet(sampleReport());
+  const row = findRow(rows, "Плановa задача");
+  assert.equal(row.getCell(3).alignment.wrapText, true, "Об'єкт");
+  assert.equal(row.getCell(5).alignment.wrapText, true, "Тип задачі");
+  assert.ok(!row.getCell(1).alignment.wrapText, "номер не переноситься");
+});
+
+test("Порядок не втрачає другий знак: 134.4 і 134.42 — різні значення", async () => {
+  const report = sampleReport();
+  report.tasks[0].order = 134.42;
+  const { rows } = await loadSheet(report);
+  assert.equal(findRow(rows, "Плановa задача").getCell(2).value, 134.42, "Excel");
+  assert.equal(formatOrder(134.42), "134.42", "PDF");
+  assert.equal(formatOrder(134.4), "134.4", "PDF без зайвого нуля");
+  assert.equal(formatOrder(134), "134", "PDF ціле");
 });
 
 test("Excel: підсумки і легенда у правильних колонках", async () => {

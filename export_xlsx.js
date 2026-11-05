@@ -84,10 +84,11 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
 
   // --- рядки задач ---
   const CENTER_COLS = new Set([1, 2, 6, 7, 8, 9, 11]);
+  const WRAP_COLS = new Set([3, 4, 5]); // Об'єкт, Найменування задачі, Тип задачі
   tasks.forEach((t) => {
     const row = sheet.addRow([
       t.taskNumber || "",
-      Math.round((t.order ?? 0) * 10) / 10,
+      Math.round((t.order ?? 0) * 100) / 100,
       t.objectName || "—",
       t.title,
       t.taskType || "",
@@ -100,7 +101,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
     ]);
     row.eachCell((cell, colNumber) => {
       cell.border = thinBorder();
-      cell.alignment = { vertical: "middle", wrapText: colNumber === 4, horizontal: CENTER_COLS.has(colNumber) ? "center" : "left" };
+      cell.alignment = { vertical: "middle", wrapText: WRAP_COLS.has(colNumber), horizontal: CENTER_COLS.has(colNumber) ? "center" : "left" };
       if (t.isAbsence) {
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ABSENCE_BG } };
         cell.font = { color: { argb: ABSENCE_TEXT } };
