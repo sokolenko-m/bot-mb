@@ -17,6 +17,7 @@ const HEARTBEAT_PAGE_ID = process.env.NOTION_HEARTBEAT_PAGE_ID || "3f47a095-971a
 const KEYS = {
   title: "название",
   constructor: "Конструктор",
+  taskNumber: "№ задачі",
   order: "Порядок",
   plannedHours: "Трудозатраты, часы",
   start: "Начало",
@@ -124,6 +125,16 @@ function getOrderNumber(props, key, def = 0) {
     return Number.isNaN(n) ? def : n;
   }
   return def;
+}
+/**
+ * Постійний номер задачі (поле unique_id), напр. "KV-420". Це не "Порядок":
+ * номер не змінюється, коли задачу переносять у черзі або перейменовують.
+ * Поля немає — порожній рядок: звіт без номера все одно коректний.
+ */
+function getTaskNumber(props, key) {
+  const id = props[key]?.unique_id;
+  if (!id || id.number === null || id.number === undefined) return "";
+  return id.prefix ? `${id.prefix}-${id.number}` : String(id.number);
 }
 function getDate(props, key) {
   return props[key]?.date || null;
@@ -349,6 +360,7 @@ async function getTasksForReport(constructorId, { startDateStr, endDateStr, obje
     return {
       id: p.id,
       title: getTitle(props),
+      taskNumber: getTaskNumber(props, KEYS.taskNumber),
       order: getOrderNumber(props, KEYS.order, 0),
       start: start ? start.start : null,
       end: end ? end.start : null,

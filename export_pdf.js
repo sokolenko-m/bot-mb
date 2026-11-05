@@ -19,9 +19,10 @@ const PAGE_OPTS = { margin: MARGIN, size: "A4", layout: "landscape" };
 
 // [ключ, заголовок, ширина, вирівнювання]
 const COLUMNS = [
-  { key: "n", title: "№", width: 32, align: "center" },
+  { key: "taskNumber", title: "№ задачі", width: 48, align: "center" },
+  { key: "order", title: "Порядок", width: 56, align: "center" },
   { key: "object", title: "Об'єкт", width: 90, align: "left" },
-  { key: "title", title: "Найменування задачі", width: 182, align: "left" },
+  { key: "title", title: "Найменування задачі", width: 161, align: "left" },
   { key: "type", title: "Тип задачі", width: 72, align: "left" },
   { key: "added", title: "Додано", width: 56, align: "center" },
   { key: "start", title: "Початок", width: 56, align: "center" },
@@ -61,7 +62,8 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
 
     for (const t of tasks) {
       const row = {
-        n: formatOrder(t.order),
+        taskNumber: t.taskNumber || "",
+        order: formatOrder(t.order),
         object: t.objectName || "—",
         title: t.title,
         type: t.taskType || "",
@@ -84,7 +86,8 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
 
     // --- підсумковий рядок ---
     const totalRow = {
-      n: "",
+      taskNumber: "",
+      order: "",
       object: "",
       title: "Разом",
       type: "",
@@ -232,4 +235,4 @@ function drawRow(doc, row, y, height, status, { isTotal = false, isNew = false, 
   }
 }
 
-module.exports = { buildPdf };
+module.exports = { buildPdf, COLUMNS, PAGE_OPTS, MARGIN, FONT_REGULAR, FONT_BOLD };
