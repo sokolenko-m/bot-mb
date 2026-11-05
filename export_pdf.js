@@ -41,7 +41,7 @@ const TABLE_WIDTH = COLUMNS.reduce((s, c) => s + c.width, 0);
 const CELL_PAD = 5;
 const ROW_MIN_HEIGHT = 20;
 
-function buildPdf({ constructorName, periodLabel, tasks, totals }) {
+function buildPdf({ constructorName, periodLabel, tasks, totals, heading }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument(PAGE_OPTS);
     const chunks = [];
@@ -49,15 +49,16 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    const hasOrigin = Boolean(totals.byOrigin);
-    const hasAbsence = Boolean(totals.absence);
+    const hasOrigin = Boolean(totals.byOrigin || totals.summary);
+    const hasAbsence = Boolean(totals.absence || totals.greyLegend);
+    const greyLegend = totals.greyLegend ? `— ${totals.greyLegend}` : "— відпустка / відсутність (не входить у підсумки годин)";
 
     // Стандартні шрифти pdfkit (Helvetica тощо) не мають кириличних гліфів —
     // без цього кирилиця/українські літери рендерились би "абракадаброю".
     doc.registerFont("UA", FONT_REGULAR);
     doc.registerFont("UA-Bold", FONT_BOLD);
 
-    let headerHeight = drawHeader(doc, constructorName, periodLabel, hasOrigin, hasAbsence);
+    let headerHeight = drawHeader(doc, { constructorName, periodLabel, hasOrigin, hasAbsence, heading, greyLegend });
     let y = drawTableHeader(doc, MARGIN + headerHeight);
 
     for (const t of tasks) {
@@ -82,6 +83,12 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
       }
       drawRow(doc, row, y, rowHeight, t.status, { isNew: t.isNew, isAbsence: t.isAbsence });
       y += rowHeight;
+    }
+
+    if (totals.summary) {
+      drawSummary(doc, totals.summary, y);
+      doc.end();
+      return;
     }
 
     // --- підсумковий рядок ---
@@ -142,7 +149,21 @@ function buildPdf({ constructorName, periodLabel, tasks, totals }) {
   });
 }
 
-function drawHeader(doc, constructorName, periodLabel, hasOrigin, hasAbsence) {
+/** Підсумкові рядки звірки під таблицею. */
+function drawSummary(doc, lines, startY) {
+  let y = startY + 10;
+  if (y + 14 * lines.length + 10 > doc.page.height - MARGIN) {
+    doc.addPage(PAGE_OPTS);
+    y = MARGIN;
+  }
+  doc.font("UA-Bold").fontSize(10);
+  for (const line of lines) {
+    doc.fillColor(line.accent ? BRAND_RED : "#000000").text(`${line.label} ${line.count} задач, ${line.hours} год`, MARGIN, y);
+    y = doc.y + 2;
+  }
+}
+
+function drawHeader(doc, { constructorName, periodLabel, hasOrigin, hasAbsence, heading, greyLegend }) {
   try {
     doc.image(LOGO_PATH, MARGIN, MARGIN, { width: 130 });
   } catch {
@@ -150,7 +171,7 @@ function drawHeader(doc, constructorName, periodLabel, hasOrigin, hasAbsence) {
   }
 
   const textX = MARGIN + 150;
-  doc.font("UA-Bold").fontSize(18).fillColor("#000000").text("Графік завантаженості конструктора", textX, MARGIN, {
+  doc.font("UA-Bold").fontSize(18).fillColor("#000000").text(heading || "Графік завантаженості конструктора", textX, MARGIN, {
     width: TABLE_WIDTH - 150,
   });
   doc.font("UA-Bold").fontSize(13).fillColor(BRAND_RED).text(constructorName, textX, doc.y + 4, {
@@ -174,7 +195,7 @@ function drawHeader(doc, constructorName, periodLabel, hasOrigin, hasAbsence) {
       .font("UA")
       .fontSize(9)
       .fillColor(ABSENCE_TEXT)
-      .text("— відпустка / відсутність (не входить у підсумки годин)", textX + 16, legendY + 1);
+      .text(greyLegend, textX + 16, legendY + 1);
   }
 
   return Math.max(78, doc.y - MARGIN + 8);

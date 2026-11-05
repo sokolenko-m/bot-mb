@@ -65,20 +65,31 @@ function assertConfigured() {
   }
 }
 
+const MAX_RATE_LIMIT_RETRIES = 4;
+
 async function notionRequest(method, url, body) {
-  const resp = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Notion-Version": NOTION_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!resp.ok) {
-    throw new Error(`Notion API ${resp.status}: ${await resp.text()}`);
+  for (let attempt = 0; ; attempt++) {
+    const resp = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (resp.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+      const seconds = Number(resp.headers?.get?.("retry-after")) || 1;
+      await new Promise((r) => setTimeout(r, seconds * 1000));
+      continue;
+    }
+    if (!resp.ok) {
+      const err = new Error(`Notion API ${resp.status}: ${await resp.text()}`);
+      err.status = resp.status;
+      throw err;
+    }
+    return resp.json();
   }
-  return resp.json();
 }
 
 async function queryAll(filter, sorts, dataSourceId = DATA_SOURCE_ID) {
@@ -352,37 +363,65 @@ async function getTasksForReport(constructorId, { startDateStr, endDateStr, obje
 
   const pages = await queryAll(filter, [{ property: KEYS.start, direction: "ascending" }]);
 
-  const tasks = pages.map((p) => {
-    const props = p.properties;
-    const start = getDate(props, KEYS.start);
-    const end = getDate(props, KEYS.end);
-    const factEnd = getDate(props, KEYS.factEnd);
-    return {
-      id: p.id,
-      title: getTitle(props),
-      taskNumber: getTaskNumber(props, KEYS.taskNumber),
-      order: getOrderNumber(props, KEYS.order, 0),
-      start: start ? start.start : null,
-      end: end ? end.start : null,
-      plannedHours: getNumber(props, KEYS.plannedHours, 0) || 0,
-      factHours: getNumber(props, KEYS.factHours, null),
-      done: isDone(props),
-      factEnd: factEnd ? factEnd.start : null,
-      objectIds: getRelationIds(props, KEYS.object),
-      taskType: getMultiSelect(props, KEYS.taskType),
-      state: presentOptional.has(KEYS.state) ? getStateText(props) : null,
-      createdTime: p.created_time,
-    };
-  });
+  const tasks = pages.map(parseTaskPage);
 
   await resolveObjectNames(tasks);
   return tasks;
+}
+
+function parseTaskPage(p) {
+  const props = p.properties;
+  const start = getDate(props, KEYS.start);
+  const end = getDate(props, KEYS.end);
+  const factEnd = getDate(props, KEYS.factEnd);
+  return {
+    id: p.id,
+    title: getTitle(props),
+    taskNumber: getTaskNumber(props, KEYS.taskNumber),
+    order: getOrderNumber(props, KEYS.order, 0),
+    start: start ? start.start : null,
+    end: end ? end.start : null,
+    plannedHours: getNumber(props, KEYS.plannedHours, 0) || 0,
+    factHours: getNumber(props, KEYS.factHours, null),
+    done: isDone(props),
+    factEnd: factEnd ? factEnd.start : null,
+    objectIds: getRelationIds(props, KEYS.object),
+    taskType: getMultiSelect(props, KEYS.taskType),
+    state: presentOptional.has(KEYS.state) ? getStateText(props) : null,
+    createdTime: p.created_time,
+  };
+}
+
+/**
+ * Стан однієї задачі за id: {deleted:true}, якщо її немає або вона в кошику,
+ * інакше {deleted:false, task, ownerIds, ownerName}. Лише 404 означає "немає":
+ * будь-яка інша помилка Notion кидається далі, щоб збій не виглядав як видалення.
+ */
+async function getTaskState(pageId) {
+  let page;
+  try {
+    page = await notionRequest("GET", `${API_BASE}/pages/${pageId}`);
+  } catch (e) {
+    if (e.status === 404) return { deleted: true };
+    throw e;
+  }
+  if (page.in_trash || page.archived) return { deleted: true };
+  const people = getPeople(page.properties, KEYS.constructor);
+  const task = parseTaskPage(page);
+  await resolveObjectNames([task]);
+  return { deleted: false, task, ownerIds: people.map((x) => x.id), ownerName: people.map((x) => (x.name || "").trim()).filter(Boolean).join(", ") };
 }
 
 module.exports = {
   listConstructors,
   listObjectsForConstructor,
   getTasksForReport,
+  getTaskState,
+  parseTaskPage,
+  resolveObjectNames,
+  notionRequest,
+  queryAll,
+  API_BASE,
   listReportAccessTelegramIds,
   getSchedulerLastCycle,
   findOriginalCreatedTimes,

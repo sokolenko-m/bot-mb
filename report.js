@@ -148,4 +148,4 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-module.exports = { buildReport, ABSENCE_STATUS };
+module.exports = { buildReport, schedulerFreshness, ABSENCE_STATUS, ABSENCE_RE, KNOWN_STATES, computeStatus };

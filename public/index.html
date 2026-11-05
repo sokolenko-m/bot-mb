@@ -146,7 +146,7 @@
   .table-wrap { overflow-x: auto; }
   table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 12.5px; }
   th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; }
-  th:nth-child(3), td:nth-child(3) { white-space: normal; min-width: 200px; }
+  th:nth-child(4), td:nth-child(4) { white-space: normal; min-width: 240px; }
   th { color: var(--hint); font-weight: 700; text-transform: uppercase; font-size: 10.5px; letter-spacing: .04em; }
   td { font-weight: 600; }
   .status-done { color: var(--success); }
@@ -166,6 +166,31 @@
   #msg.error { color: var(--danger); }
   #msg.ok { color: var(--success); }
   .hint { margin-top: 10px; font-size: 12.5px; font-weight: 600; color: var(--hint); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .plan-row {
+    display: block; width: 100%; text-align: left; padding: 11px 14px; margin-top: 8px; cursor: pointer;
+    background: var(--surface-alt); border: 2px solid transparent; border-radius: 18px; font-family: inherit; color: var(--text);
+  }
+  .plan-row.active { border-color: var(--dark); }
+  .plan-row-name { font-size: 14.5px; font-weight: 800; }
+  .plan-row-state { margin-top: 2px; font-size: 12.5px; font-weight: 600; color: var(--hint); }
+  .plan-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .plan-actions button {
+    flex: 1 1 150px; padding: 12px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-alt); color: var(--text); font-size: 13.5px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .plan-actions button.main { background: var(--accent); border-color: var(--accent); color: var(--dark-text); }
+  .plan-actions button:disabled { opacity: .55; cursor: default; }
+  .plan-heading { font-size: 16px; font-weight: 800; }
+  .plan-line { margin-top: 4px; font-size: 13px; font-weight: 600; }
+  .plan-line.muted { color: var(--hint); }
+  .plan-summary { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 14px; font-weight: 700; }
+  .plan-summary div { margin-top: 3px; }
+  .plan-summary .accent { color: var(--accent); }
+  .planned-title { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 600; color: var(--hint); }
+  #plan-msg { margin-top: 12px; font-size: 13px; font-weight: 700; color: var(--hint); min-height: 18px; }
+  #plan-msg.error { color: var(--danger); }
+  #plan-msg.ok { color: var(--success); }
 
   .flatpickr-calendar {
     background: var(--surface); border: none; border-radius: 22px;
@@ -210,7 +235,29 @@
 </head>
 <body>
   <div class="brand"><img src="/assets/logo.png" alt="МаксіБуд" /></div>
-  <h1>Звіт по завантаженості конструктора</h1>
+  <h1 id="page-title">Звіт по завантаженості конструктора</h1>
+
+  <div class="tabs">
+    <button class="chip active" id="tab-report" type="button">Звіт</button>
+    <button class="chip" id="tab-plan" type="button">План місяця</button>
+  </div>
+
+  <div id="plan-view" hidden>
+    <div class="card">
+      <div class="field-row">
+        <div class="field-content">
+          <div class="field-label">Місяць</div>
+          <div class="select-wrap"><select id="plan-month"></select></div>
+        </div>
+      </div>
+      <div id="plan-list"></div>
+      <div id="plan-msg"></div>
+    </div>
+    <div class="card" id="plan-detail" hidden></div>
+    <div class="card" id="plan-recon" hidden></div>
+  </div>
+
+  <div id="report-view">
 
   <div class="card">
     <div class="field-list">
@@ -286,6 +333,7 @@
         <tbody id="table-body"></tbody>
       </table>
     </div>
+  </div>
   </div>
 
 <script>
@@ -655,6 +703,306 @@ $("#btn-xlsx").addEventListener("click", () => doExport("xlsx"));
 $("#btn-pdf").addEventListener("click", () => doExport("pdf"));
 
 loadConstructors();
+
+// --- План місяця і звірка ---
+
+const MONTH_NAMES = ["Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень", "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень"];
+const plan = { me: null, list: [], constructorId: null, ticket: 0 };
+
+function setPlanMsg(text, kind) {
+  const el = $("#plan-msg");
+  el.textContent = text || "";
+  el.className = kind || "";
+}
+
+function monthLabel(month) {
+  const [y, m] = month.split("-").map(Number);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+
+function shiftMonth(month, delta) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}
+
+function formatDateFull(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Kyiv" });
+}
+
+function selectedMonth() {
+  return $("#plan-month").value;
+}
+
+function canFixSelectedMonth() {
+  const m = selectedMonth();
+  return Boolean(plan.me?.canFixPlans) && (m === plan.me.currentMonth || m === plan.me.nextMonth);
+}
+
+/** Новий запит скасовує показ відповіді на попередній: не покажемо дані чужого місяця. */
+function newTicket() {
+  plan.ticket += 1;
+  return plan.ticket;
+}
+
+function confirmDialog(text) {
+  return new Promise((resolve) => {
+    if (tg?.showConfirm && tg.isVersionAtLeast?.("6.2")) tg.showConfirm(text, resolve);
+    else resolve(window.confirm(text));
+  });
+}
+
+function setTab(name) {
+  const isPlan = name === "plan";
+  $("#plan-view").hidden = !isPlan;
+  $("#report-view").hidden = isPlan;
+  $("#tab-plan").classList.toggle("active", isPlan);
+  $("#tab-report").classList.toggle("active", !isPlan);
+  $("#page-title").textContent = isPlan ? "План місяця і звірка" : "Звіт по завантаженості конструктора";
+  if (isPlan && !plan.me) initPlanView();
+}
+$("#tab-report").addEventListener("click", () => setTab("report"));
+$("#tab-plan").addEventListener("click", () => setTab("plan"));
+
+async function initPlanView() {
+  try {
+    plan.me = await api("/api/me");
+    const months = [plan.me.nextMonth, plan.me.currentMonth];
+    for (let i = 1; i <= 11; i++) months.push(shiftMonth(plan.me.currentMonth, -i));
+    $("#plan-month").innerHTML = months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join("");
+    $("#plan-month").value = plan.me.currentMonth;
+    await loadPlanList();
+  } catch (e) {
+    setPlanMsg(e.message, "error");
+  }
+}
+
+$("#plan-month").addEventListener("change", () => {
+  plan.constructorId = null;
+  loadPlanList();
+});
+
+function clearPlanCards() {
+  $("#plan-detail").hidden = true;
+  $("#plan-recon").hidden = true;
+}
+
+async function loadPlanList() {
+  const ticket = newTicket();
+  clearPlanCards();
+  $("#plan-list").innerHTML = "";
+  setPlanMsg("Завантаження...");
+  try {
+    const list = await api(`/api/plans?month=${encodeURIComponent(selectedMonth())}`);
+    if (ticket !== plan.ticket) return;
+    plan.list = list;
+    renderPlanList();
+    setPlanMsg("");
+  } catch (e) {
+    if (ticket === plan.ticket) setPlanMsg(e.message, "error");
+  }
+}
+
+function planStateText(p) {
+  if (!p) return "➖ Ще не зафіксовано";
+  return `✅ Версія ${p.version}, ${formatDateFull(p.fixedAt)}: ${p.taskCount} задач, ${p.hours} год`;
+}
+
+function renderPlanList() {
+  $("#plan-list").innerHTML = plan.list
+    .map(
+      (c) => `<button type="button" class="plan-row${c.constructorId === plan.constructorId ? " active" : ""}" data-id="${escapeHtml(c.constructorId)}">
+        <div class="plan-row-name">${escapeHtml(c.name)}</div>
+        <div class="plan-row-state">${escapeHtml(planStateText(c.plan))}</div>
+      </button>`
+    )
+    .join("");
+  document.querySelectorAll(".plan-row").forEach((b) => b.addEventListener("click", () => openPlan(b.dataset.id)));
+}
+
+function selectedPlanEntry() {
+  return plan.list.find((c) => c.constructorId === plan.constructorId) || null;
+}
+
+async function openPlan(constructorId) {
+  plan.constructorId = constructorId;
+  renderPlanList();
+  await loadPlanDetail();
+}
+
+async function loadPlanDetail() {
+  const ticket = newTicket();
+  const month = selectedMonth();
+  const id = plan.constructorId;
+  clearPlanCards();
+  setPlanMsg("Завантаження...");
+  try {
+    const query = `month=${encodeURIComponent(month)}&constructorId=${encodeURIComponent(id)}`;
+    const [preview, versions] = await Promise.all([api(`/api/plans/preview?${query}`), api(`/api/plans/versions?${query}`)]);
+    if (ticket !== plan.ticket) return;
+    renderPlanDetail(preview, versions);
+    setPlanMsg("");
+  } catch (e) {
+    if (ticket === plan.ticket) setPlanMsg(e.message, "error");
+  }
+}
+
+function diffText(preview) {
+  if (preview.unchanged) return "План не змінився.";
+  if (preview.activeVersion === null) return "";
+  const d = preview.diff;
+  return `Якщо зафіксувати зараз: додасться ${d.added}, зникне ${d.removed}, зміниться ${d.changed}.`;
+}
+
+function renderPlanDetail(preview, versions) {
+  const entry = selectedPlanEntry();
+  const active = versions.find((v) => v.state === "Активний");
+  const canFix = canFixSelectedMonth() && preview.taskCount > 0 && !preview.unchanged;
+  const history = versions
+    .map((v) => `<div class="plan-line muted">Версія ${v.version}: ${formatDateFull(v.fixedAt)}, ${escapeHtml(v.fixedBy)}, ${v.taskCount} задач, ${v.hours} год${v.state === "Активний" ? " (діюча)" : ""}${v.note ? `, ${escapeHtml(v.note)}` : ""}</div>`)
+    .join("");
+  const rows = preview.tasks
+    .map(
+      (t) => `<tr class="${t.isAbsence ? "row-absence" : ""}">
+        <td>${escapeHtml(t.taskNumber || "—")}</td>
+        <td>${t.order !== null && t.order !== undefined ? Math.round(t.order * 100) / 100 : ""}</td>
+        <td>${escapeHtml(t.objectName || "—")}</td>
+        <td>${escapeHtml(t.title)}</td>
+        <td>${escapeHtml(t.taskType || "")}</td>
+        <td>${formatDateShort(t.createdTime)}</td>
+        <td>${formatDateShort(t.start)}</td>
+        <td>${formatDateShort(t.end)}</td>
+        <td>${t.plannedHours ?? ""}</td>
+      </tr>`
+    )
+    .join("");
+  const el = $("#plan-detail");
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="plan-heading">${escapeHtml(entry?.name || "")}: ${monthLabel(preview.month)}</div>
+    <div class="plan-line">${active ? `Діє версія ${active.version}.` : "План ще не зафіксовано."}</div>
+    <div class="plan-line">Зараз у Notion на цей місяць: ${preview.taskCount} задач, ${preview.hours} год.</div>
+    <div class="plan-line muted">${escapeHtml(diffText(preview))}</div>
+    ${history}
+    <div class="plan-actions">
+      ${canFix ? `<button type="button" class="main" id="btn-fix">Зафіксувати план</button>` : ""}
+      ${active ? `<button type="button" id="btn-plan-pdf">PDF плану в чат</button><button type="button" id="btn-reconcile">Звірка</button>` : ""}
+    </div>
+    ${rows ? `<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>№ задачі</th><th>Порядок</th><th>Об'єкт</th><th>Найменування задачі</th><th>Тип</th><th>Додано</th><th>Початок</th><th>Кінець</th><th>План, год</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="hint">Немає задач на цей місяць.</div>`}`;
+  $("#btn-fix")?.addEventListener("click", () => fixPlan(preview, entry));
+  $("#btn-plan-pdf")?.addEventListener("click", sendPlanPdf);
+  $("#btn-reconcile")?.addEventListener("click", loadReconciliation);
+}
+
+async function fixPlan(preview, entry) {
+  if (plan.fixing) return;
+  plan.fixing = true;
+  const month = selectedMonth();
+  let text = `${entry?.name || ""}, ${monthLabel(month)}: ${preview.taskCount} задач, ${preview.hours} год. Зафіксувати?`;
+  if (preview.activeVersion !== null) text = `${diffText(preview)} Буде нова версія плану. ${text}`;
+  const button = $("#btn-fix");
+  try {
+    if (!(await confirmDialog(text))) return;
+    if (button) button.disabled = true;
+    setPlanMsg("Зберігаю план...");
+    const r = await api("/api/plans/fix", { method: "POST", body: JSON.stringify({ month, constructorId: plan.constructorId }) });
+    await refreshAfterFix();
+    if (r.status === "unchanged") setPlanMsg("План не змінився, нову версію не створено.", "ok");
+    else if (r.pdfSent) setPlanMsg(`Зафіксовано версію ${r.version}. PDF надіслано вам у чат ✓`, "ok");
+    else setPlanMsg(`Зафіксовано версію ${r.version}, але PDF не надіслався. Натисніть «PDF плану в чат».`, "error");
+    tg?.HapticFeedback?.notificationOccurred("success");
+  } catch (e) {
+    if (button) button.disabled = false;
+    setPlanMsg(e.message, "error");
+  } finally {
+    plan.fixing = false;
+  }
+}
+
+async function refreshAfterFix() {
+  const id = plan.constructorId;
+  plan.list = await api(`/api/plans?month=${encodeURIComponent(selectedMonth())}`);
+  plan.constructorId = id;
+  renderPlanList();
+  await loadPlanDetail();
+}
+
+async function sendPlanPdf() {
+  setPlanMsg("Готую файл і надсилаю в чат...");
+  try {
+    await api("/api/plans/pdf", { method: "POST", body: JSON.stringify({ month: selectedMonth(), constructorId: plan.constructorId }) });
+    setPlanMsg("Надіслано вам у чат з ботом ✓", "ok");
+  } catch (e) {
+    setPlanMsg(e.message, "error");
+  }
+}
+
+async function loadReconciliation() {
+  const ticket = newTicket();
+  const month = selectedMonth();
+  const id = plan.constructorId;
+  setPlanMsg("Формую звірку...");
+  try {
+    const data = await api("/api/reconcile", { method: "POST", body: JSON.stringify({ month, constructorId: id }) });
+    if (ticket !== plan.ticket) return;
+    renderReconciliation(data);
+    setPlanMsg("");
+  } catch (e) {
+    if (ticket === plan.ticket) setPlanMsg(e.message, "error");
+  }
+}
+
+function renderReconciliation(data) {
+  const t = data.totals;
+  const rows = data.rows
+    .map(
+      (r) => `<tr class="${r.isAbsence || r.isDeleted ? "row-absence" : r.isNew ? "row-new" : ""}">
+        <td>${escapeHtml(r.taskNumber || "—")}</td>
+        <td>${r.order !== null && r.order !== undefined ? Math.round(r.order * 100) / 100 : ""}</td>
+        <td>${escapeHtml(r.objectName || "—")}</td>
+        <td>${escapeHtml(r.title)}${r.plannedTitle ? `<span class="planned-title">у плані: ${escapeHtml(r.plannedTitle)}</span>` : ""}</td>
+        <td>${escapeHtml(r.taskType || "")}</td>
+        <td>${formatDateShort(r.createdTime)}</td>
+        <td>${formatDateShort(r.start)}</td>
+        <td>${formatDateShort(r.end)}</td>
+        <td>${r.plannedHours ?? ""}</td>
+        <td>${r.factHours ?? ""}</td>
+        <td class="${STATUS_CLASS[r.status] || ""}">${escapeHtml(r.status)}</td>
+      </tr>`
+    )
+    .join("");
+  const el = $("#plan-recon");
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="plan-heading">Звірка: ${monthLabel(data.month)}</div>
+    <div class="plan-line muted">План: версія ${data.plan.version}, зафіксовано ${formatDateFull(data.plan.fixedAt)}${data.plan.note ? `. ${escapeHtml(data.plan.note)}` : ""}${data.asOf ? `. Проміжна картина, станом на ${formatDateFull(data.asOf)}` : ""}</div>
+    <div class="plan-summary">
+      <div>Заплановано на місяць: ${t.planned.count} задач, ${t.planned.hours} год</div>
+      <div>Виконано із запланованих: ${t.done.count} задач, ${t.done.hours} год</div>
+      <div class="accent">Нових задач додано протягом місяця: ${t.added.count} задач, ${t.added.hours} год</div>
+    </div>
+    ${schedulerLine(data.scheduler)}
+    <div class="plan-actions">
+      <button type="button" id="btn-rec-xlsx">Завантажити Excel</button>
+      <button type="button" id="btn-rec-pdf">Завантажити PDF</button>
+    </div>
+    <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>№ задачі</th><th>Порядок</th><th>Об'єкт</th><th>Найменування задачі</th><th>Тип</th><th>Додано</th><th>Початок</th><th>Кінець</th><th>План, год</th><th>Факт, год</th><th>Статус</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  $("#btn-rec-xlsx").addEventListener("click", () => exportReconciliation("xlsx"));
+  $("#btn-rec-pdf").addEventListener("click", () => exportReconciliation("pdf"));
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function exportReconciliation(format) {
+  setPlanMsg("Готую файл і надсилаю в чат...");
+  try {
+    await api("/api/reconcile/export", { method: "POST", body: JSON.stringify({ month: selectedMonth(), constructorId: plan.constructorId, format }) });
+    setPlanMsg("Надіслано вам у чат з ботом ✓", "ok");
+    tg?.HapticFeedback?.notificationOccurred("success");
+  } catch (e) {
+    setPlanMsg(e.message, "error");
+  }
+}
 </script>
 </body>
 </html>

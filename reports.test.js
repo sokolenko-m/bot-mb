@@ -14,6 +14,7 @@ process.env.NOTION_DATA_SOURCE_ID = "ds-test";
 
 const notion = require("./notion");
 const { buildXlsx } = require("./export_xlsx");
+const { reconciliationPayload, planPayload } = require("./plan_payloads");
 const { buildPdf, formatOrder, COLUMNS, PAGE_OPTS, MARGIN, FONT_BOLD, FONT_REGULAR } = require("./export_pdf");
 
 const SCHEMA_PROPS = {
@@ -224,6 +225,148 @@ test("Порядок не втрачає другий знак: 134.4 і 134.42 
   assert.equal(formatOrder(134.42), "134.42", "PDF");
   assert.equal(formatOrder(134.4), "134.4", "PDF без зайвого нуля");
   assert.equal(formatOrder(134), "134", "PDF ціле");
+});
+
+function sampleReconciliation() {
+  return {
+    month: "2026-12",
+    monthLabel: "01.12.2026–31.12.2026",
+    asOf: "2026-12-15",
+    plan: { version: 2, fixedAt: "2026-12-12T10:00:00.000Z", note: "" },
+    rows: [
+      {
+        taskNumber: "KV-1",
+        order: 1,
+        title: "Нова назва",
+        plannedTitle: "Стара назва",
+        objectName: "Об'єкт А",
+        taskType: "КМД",
+        createdTime: "2026-11-20T08:00:00.000Z",
+        start: "2026-12-07",
+        end: "2026-12-08",
+        plannedHours: 8,
+        factHours: 7,
+        hours: 7,
+        status: "Виконано",
+        isDone: true,
+        isNew: false,
+        isDeleted: false,
+        isAbsence: false,
+      },
+      {
+        taskNumber: "KV-2",
+        order: 2,
+        title: "Видалена",
+        plannedTitle: null,
+        objectName: "Об'єкт Б",
+        taskType: "",
+        createdTime: null,
+        start: "2026-12-09",
+        end: "2026-12-09",
+        plannedHours: 4,
+        factHours: null,
+        hours: 0,
+        status: "Видалена",
+        isDone: false,
+        isNew: false,
+        isDeleted: true,
+        isAbsence: false,
+      },
+      {
+        taskNumber: "KV-3",
+        order: 3,
+        title: "Позапланова",
+        plannedTitle: null,
+        objectName: "Об'єкт В",
+        taskType: "",
+        createdTime: "2026-12-10T08:00:00.000Z",
+        start: "2026-12-10",
+        end: "2026-12-10",
+        plannedHours: 2,
+        factHours: 3,
+        hours: 3,
+        status: "В роботі",
+        isDone: false,
+        isNew: true,
+        isDeleted: false,
+        isAbsence: false,
+      },
+    ],
+    totals: {
+      planned: { count: 2, hours: 12 },
+      done: { count: 1, hours: 7 },
+      added: { count: 1, hours: 3 },
+      absence: { count: 0, hours: 0 },
+    },
+  };
+}
+
+test("звірка в Excel: заголовок, версія плану, назва в плані, три рядки підсумку", async () => {
+  const { sheet, rows } = await loadSheet(reconciliationPayload(sampleReconciliation(), "Тест Конструктор"));
+  assert.equal(sheet.getCell("C1").value, "Звірка плану з фактом");
+  const period = sheet.getCell("C3").value;
+  assert.match(period, /версія 2/);
+  assert.match(period, /12\.12\.2026/);
+  assert.match(period, /станом на 15\.12\.2026/);
+
+  assert.ok(findRow(rows, "Нова назва (у плані: Стара назва)"), "перейменована");
+  assert.ok(!findRow(rows, "Разом"), "у звірці лише три підсумкові рядки");
+
+  const line = (label) => findRow(rows, label);
+  assert.equal(line("Заплановано на місяць:").getCell(9).value, "2 задач");
+  assert.equal(line("Заплановано на місяць:").getCell(11).value, "12 год");
+  assert.equal(line("Виконано із запланованих:").getCell(9).value, "1 задач");
+  assert.equal(line("Виконано із запланованих:").getCell(11).value, "7 год");
+  assert.equal(line("Нових задач додано протягом місяця:").getCell(9).value, "1 задач");
+  assert.equal(line("Нових задач додано протягом місяця:").getCell(11).value, "3 год");
+
+  assert.equal(findRow(rows, "Видалена").getCell(4).fill.fgColor.argb, "FFEDEDED", "видалена сіра");
+  assert.equal(findRow(rows, "Позапланова").getCell(4).fill.fgColor.argb, "FFFFF3CD", "нова жовта");
+});
+
+test("звірка: пов'язана легенда каже правду про сірі рядки", async () => {
+  const { rows } = await loadSheet(reconciliationPayload(sampleReconciliation(), "Тест"));
+  const legend = rows.find((r) => String(r.getCell(4).value || "").startsWith("Сірим"));
+  assert.match(legend.getCell(4).value, /видалені/);
+});
+
+test("звірка в PDF будується", async () => {
+  const pdf = await buildPdf(reconciliationPayload(sampleReconciliation(), "Тест"));
+  assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
+});
+
+test("підсумок після місяця без «станом на», примітка про копію показується", async () => {
+  const data = { ...sampleReconciliation(), asOf: null };
+  data.plan = { ...data.plan, note: "Відновлено з резервної копії 30.10" };
+  const payload = reconciliationPayload(data, "Тест");
+  assert.doesNotMatch(payload.periodLabel, /станом/);
+  assert.match(payload.periodLabel, /Відновлено з резервної копії 30\.10/);
+});
+
+test("PDF плану: збережені дані, статус «Заплановано», без жовтих", async () => {
+  const payload = planPayload(
+    {
+      month: "2026-12",
+      version: 1,
+      fixedAt: "2026-11-30T10:00:00.000Z",
+      note: "",
+      tasks: [
+        { pageId: "1", taskNumber: "KV-1", title: "Робота", objectName: "О", taskType: "", order: 1, plannedHours: 8, start: "2026-12-07", end: "2026-12-07", createdTime: "2026-12-05T08:00:00.000Z", isAbsence: false },
+        { pageId: "2", taskNumber: "KV-2", title: "Відпустка", objectName: "—", taskType: "", order: 2, plannedHours: 16, start: "2026-12-08", end: "2026-12-09", createdTime: null, isAbsence: true },
+      ],
+    },
+    "Тест"
+  );
+  assert.equal(payload.tasks[0].status, "Заплановано");
+  assert.equal(payload.tasks[0].isNew, false);
+  assert.equal(payload.tasks[1].status, "Відсутність");
+  assert.deepEqual(payload.totals.absence, { count: 1, hours: 16 });
+  assert.equal(payload.totals.plannedHours, 8);
+  assert.equal(payload.totals.count, 1);
+  assert.match(payload.periodLabel, /План, версія 1/);
+  assert.equal((await buildPdf(payload)).subarray(0, 5).toString(), "%PDF-");
+  const { rows } = await loadSheet(payload);
+  assert.ok(findRow(rows, "Разом"), "план має звичайний підсумок");
 });
 
 test("Excel: підсумки і легенда у правильних колонках", async () => {

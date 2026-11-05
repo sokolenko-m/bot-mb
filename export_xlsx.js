@@ -11,11 +11,12 @@ const ABSENCE_BG = "FFEDEDED";
 const ABSENCE_TEXT = "FF8B8886";
 const PAUSED_TEXT = "FFB45309";
 
-async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
+async function buildXlsx({ constructorName, periodLabel, tasks, totals, heading }) {
   const wb = new ExcelJS.Workbook();
   const sheet = wb.addWorksheet("Графік завантаженості");
-  const hasOrigin = Boolean(totals.byOrigin);
-  const hasAbsence = Boolean(totals.absence);
+  const hasOrigin = Boolean(totals.byOrigin || totals.summary);
+  const hasAbsence = Boolean(totals.absence || totals.greyLegend);
+  const greyLegend = totals.greyLegend ? `Сірим — ${totals.greyLegend}` : "Сірим — відпустка / відсутність (не входить у підсумки годин)";
 
   // 1:№ задачі 2:Порядок 3:Об'єкт 4:Найменування задачі 5:Тип задачі 6:Додано 7:Початок 8:Кінець 9:План, год 10:Статус 11:Факт, год
   sheet.columns = [
@@ -42,7 +43,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
   // --- заголовок ---
   sheet.mergeCells("C1:K1");
   const titleCell = sheet.getCell("C1");
-  titleCell.value = "Графік завантаженості конструктора";
+  titleCell.value = heading || "Графік завантаженості конструктора";
   titleCell.font = { bold: true, size: 16, color: { argb: "FF000000" } };
   titleCell.alignment = { vertical: "middle", indent: 1 };
 
@@ -66,7 +67,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
     legendRow.getCell(4).fill = { type: "pattern", pattern: "solid", fgColor: { argb: NEW_TASK_BG } };
   }
   if (hasAbsence) {
-    const legendRow = sheet.addRow(["", "", "", "Сірим — відпустка / відсутність (не входить у підсумки годин)"]);
+    const legendRow = sheet.addRow(["", "", "", greyLegend]);
     legendRow.getCell(4).font = { italic: true, size: 10, color: { argb: ABSENCE_TEXT } };
     legendRow.getCell(4).fill = { type: "pattern", pattern: "solid", fgColor: { argb: ABSENCE_BG } };
   }
@@ -84,7 +85,7 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
 
   // --- рядки задач ---
   const CENTER_COLS = new Set([1, 2, 6, 7, 8, 9, 11]);
-  const WRAP_COLS = new Set([3, 4, 5]); // Об'єкт, Найменування задачі, Тип задачі
+  const WRAP_COLS = new Set([3, 4, 5, 10]); // Об'єкт, Найменування задачі, Тип задачі, Статус
   tasks.forEach((t) => {
     const row = sheet.addRow([
       t.taskNumber || "",
@@ -113,6 +114,18 @@ async function buildXlsx({ constructorName, periodLabel, tasks, totals }) {
     else if (t.status === "В роботі") row.getCell(10).font = { color: { argb: BRAND_RED } };
     else if (t.status === "На паузі") row.getCell(10).font = { color: { argb: PAUSED_TEXT } };
   });
+
+  if (totals.summary) {
+    sheet.addRow([]);
+    for (const line of totals.summary) {
+      const r = sheet.addRow(["", "", "", line.label, "", "", "", "", `${line.count} задач`, "", `${line.hours} год`]);
+      const font = { bold: true, ...(line.accent ? { color: { argb: BRAND_RED } } : {}) };
+      r.getCell(4).font = font;
+      r.getCell(9).font = font;
+      r.getCell(11).font = font;
+    }
+    return wb.xlsx.writeBuffer();
+  }
 
   // --- підсумок (без відпусток) ---
   const totalRow = sheet.addRow(["", "", "", "Разом", "", "", "", "", totals.plannedHours, `Задач: ${totals.count}`, totals.factHours]);
